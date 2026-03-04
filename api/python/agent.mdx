@@ -1,0 +1,289 @@
+---
+title: AgentType
+description: Create custom agents that integrate with Havoc Teamserver
+icon: robot
+---
+
+## Overview
+
+The `AgentType` class is the base class for implementing custom agents in Havoc. It defines the agent's metadata, build configuration, command handlers, and communication protocol.
+
+## Class Definition
+
+```python
+from havoc.agent import *
+
+class MyCustomAgent(AgentType):
+    Name = "CustomAgent"
+    Author = "@YourHandle"
+    Version = "0.1"
+    Description = "Description of your custom agent"
+    MagicValue = 0x12345678
+    
+    # Required methods
+    def buildconfig(self) -> dict:
+        pass
+    
+    def response(self, response: dict) -> None:
+        pass
+```
+
+## Required Attributes
+
+<ParamField path="Name" type="string" required>
+  The display name of your agent shown in the Havoc client interface.
+</ParamField>
+
+<ParamField path="Author" type="string" required>
+  Author identifier (typically a handle or username).
+</ParamField>
+
+<ParamField path="Version" type="string" required>
+  Version string for your agent implementation.
+</ParamField>
+
+<ParamField path="Description" type="string" required>
+  Brief description of the agent's purpose and capabilities.
+</ParamField>
+
+<ParamField path="MagicValue" type="int" required>
+  Unique identifier (hex value) used to distinguish your agent's traffic from other agents.
+  
+  Example: `0x12345678`
+</ParamField>
+
+## Required Methods
+
+### buildconfig()
+
+Defines the build configuration options for your agent. These settings are displayed in the Havoc client when generating an agent payload.
+
+**Returns:** `dict` - Configuration key-value pairs
+
+```python
+def buildconfig(self) -> dict:
+    return {
+        "Sleep": "5",
+        "Jitter": "20",
+        "Host": "0.0.0.0",
+        "Port": "8080"
+    }
+```
+
+<Accordion title="Common Configuration Options">
+  - **Sleep**: Default sleep interval in seconds between check-ins
+  - **Jitter**: Randomization percentage applied to sleep interval
+  - **Host**: Callback host address
+  - **Port**: Callback port number
+  - **UserAgent**: HTTP User-Agent string (for HTTP/HTTPS agents)
+  - **KillDate**: Date when agent should terminate itself
+</Accordion>
+
+### response()
+
+Handles incoming responses from the agent. This method is called when the agent checks in with data.
+
+**Parameters:**
+
+<ParamField path="response" type="dict" required>
+  Dictionary containing the agent's response data, including:
+  - `AgentHeader`: Metadata about the agent
+  - Encrypted payload data
+</ParamField>
+
+```python
+def response(self, response: dict) -> None:
+    agent_header = response["AgentHeader"]
+    
+    # Decrypt the response
+    agent_response = self.decrypt_response(agent_header, response)
+    
+    # Parse the response
+    parser = Parser(agent_response)
+    command_id = parser.parse_int()
+    
+    if command_id == COMMAND_SHELL:
+        output = parser.parse_str()
+        self.console_message(output, "")
+    elif command_id == COMMAND_REGISTER:
+        self.handle_registration(parser)
+```
+
+## Communication Methods
+
+### console_message()
+
+Sends output to the agent's console in the Havoc client.
+
+```python
+self.console_message(message, message_type)
+```
+
+<ParamField path="message" type="string" required>
+  The message content to display
+</ParamField>
+
+<ParamField path="message_type" type="string">
+  Message type classification (e.g., "good", "error", "info", "")
+</ParamField>
+
+### decrypt_response()
+
+Decrypts an encrypted agent response using your agent's encryption scheme.
+
+```python
+decrypted_data = self.decrypt_response(agent_header, response)
+```
+
+## Complete Example
+
+<CodeGroup>
+```python Agent Implementation
+from havoc.service import HavocService
+from havoc.agent import *
+
+COMMAND_REGISTER = 0x100
+COMMAND_SHELL = 0x101
+COMMAND_UPLOAD = 0x102
+
+class CustomAgent(AgentType):
+    Name = "Custom Agent"
+    Author = "@operator"
+    Version = "1.0"
+    Description = "Custom agent with shell and file upload"
+    MagicValue = 0xdeadbeef
+    
+    def __init__(self):
+        super().__init__()
+        self.register_commands()
+    
+    def buildconfig(self) -> dict:
+        return {
+            "Sleep": "5",
+            "Jitter": "20",
+            "Host": "192.168.1.100",
+            "Port": "443"
+        }
+    
+    def register_commands(self):
+        # Register custom commands
+        self.register_command(CommandShell())
+        self.register_command(CommandUpload())
+    
+    def response(self, response: dict) -> None:
+        agent_header = response["AgentHeader"]
+        agent_response = self.decrypt_response(agent_header, response)
+        
+        parser = Parser(agent_response)
+        command_id = parser.parse_int()
+        
+        if command_id == COMMAND_REGISTER:
+            self.handle_registration(parser)
+        elif command_id == COMMAND_SHELL:
+            output = parser.parse_str()
+            self.console_message(output, "")
+        elif command_id == COMMAND_UPLOAD:
+            status = parser.parse_int()
+            if status == 0:
+                self.console_message("[+] File uploaded successfully", "good")
+            else:
+                self.console_message("[-] Upload failed", "error")
+    
+    def handle_registration(self, parser: Parser):
+        hostname = parser.parse_str()
+        username = parser.parse_str()
+        domain = parser.parse_str()
+        internal_ip = parser.parse_str()
+        process_name = parser.parse_str()
+        process_pid = parser.parse_int()
+        os_version = parser.parse_str()
+        os_arch = parser.parse_str()
+        
+        # Set agent metadata
+        self.set_info({
+            "Hostname": hostname,
+            "Username": username,
+            "Domain": domain,
+            "InternalIP": internal_ip,
+            "Process": f"{process_name} ({process_pid})",
+            "OS": f"{os_version} {os_arch}"
+        })
+        
+        self.console_message(f"[+] Agent registered from {hostname}", "good")
+
+# Initialize and register the agent
+agent = CustomAgent()
+
+havoc_service = HavocService(
+    endpoint="ws://0.0.0.0:40056/service-endpoint",
+    password="service-password"
+)
+
+havoc_service.register_agent(agent)
+```
+
+```python Registration Handler
+def handle_registration(self, parser: Parser):
+    """Parse and process agent registration data"""
+    
+    # Parse registration data
+    hostname = parser.parse_str()
+    username = parser.parse_str()
+    domain = parser.parse_str()
+    internal_ip = parser.parse_str()
+    process_name = parser.parse_str()
+    process_pid = parser.parse_int()
+    os_version = parser.parse_str()
+    os_build = parser.parse_str()
+    os_arch = parser.parse_str()
+    
+    # Update agent information in Havoc client
+    self.set_info({
+        "Hostname": hostname,
+        "Username": username,
+        "Domain": domain,
+        "InternalIP": internal_ip,
+        "Process": f"{process_name} ({process_pid})",
+        "OS": f"{os_version} Build {os_build} {os_arch}",
+        "ProcessArch": os_arch
+    })
+    
+    self.console_message(
+        f"[+] New agent from {username}@{hostname}",
+        "good"
+    )
+```
+</CodeGroup>
+
+## Helper Classes
+
+### Parser
+
+Utility class for parsing binary data received from agents.
+
+```python
+from havoc.agent import Parser
+
+parser = Parser(binary_data)
+
+# Parse different data types
+int_value = parser.parse_int()
+string_value = parser.parse_str()
+data_value = parser.parse_data()
+```
+
+**Methods:**
+- `parse_int()` - Parse a 4-byte integer
+- `parse_str()` - Parse a length-prefixed string
+- `parse_data()` - Parse length-prefixed binary data
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="HavocService" icon="server" href="/api/python/service">
+    Connect your agent to the Teamserver
+  </Card>
+  <Card title="Commands" icon="terminal" href="/api/python/commands">
+    Define custom commands for your agent
+  </Card>
+</CardGroup>

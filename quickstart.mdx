@@ -1,80 +1,290 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get up and running with Havoc Framework in minutes
 ---
 
-## Get started in three steps
+This quickstart guide will walk you through setting up Havoc Framework, starting the teamserver, connecting the client, and generating your first Demon agent.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, ensure you have:
+- A supported Linux distribution (Ubuntu 20.04/22.04, Debian 10/11, or Kali Linux)
+- All required dependencies installed (see [Installation](/installation))
+- Successfully built both the teamserver and client
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Start the teamserver
 
-### Step 2: Deploy your changes
+The teamserver is the backend component that handles agent communications, payload generation, and client connections.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Navigate to the Havoc directory">
+    ```bash
+    cd Havoc
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Launch the teamserver with a profile">
+    ```bash
+    sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    <Info>
+      - `--profile`: Specifies the configuration profile
+      - `-v`: Enables verbose output
+      - `--debug`: Enables debug logging
+    </Info>
 
-### Step 3: Go live
+    You should see output indicating the teamserver has started and is listening for client connections.
+  </Step>
+</Steps>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+## Connect the client
+
+<Steps>
+  <Step title="Start the Havoc client">
+    In a new terminal window:
+
+    ```bash
+    ./havoc client
+    ```
+
+    The client GUI will launch and display a connection dialog.
+  </Step>
+
+  <Step title="Configure connection settings">
+    Enter your connection details:
+    - **Profile Name**: A descriptive name (e.g., "Local Server")
+    - **Host**: The teamserver address (e.g., `127.0.0.1` for local)
+    - **Port**: The teamserver port (default: `40056`)
+    - **Username**: Your operator username (defined in the profile)
+    - **Password**: Your operator password (defined in the profile)
+
+    <Note>
+      The default credentials in `havoc.yaotl` are:
+      - Username: `5pider` or `Neo`
+      - Password: `password1234`
+    </Note>
+  </Step>
+
+  <Step title="Connect">
+    Click **Connect** to establish the connection. Once connected, you'll see the main Havoc interface with the session graph, event log, and console.
+  </Step>
+</Steps>
+
+## Create a listener
+
+Listeners are how agents communicate with the teamserver.
+
+<Steps>
+  <Step title="Open the Listeners view">
+    In the top menu, navigate to **View** → **Listeners**.
+
+    A new pane will appear at the bottom of the window.
+  </Step>
+
+  <Step title="Add a new listener">
+    Click the **Add** button in the Listeners pane.
+  </Step>
+
+  <Step title="Configure the listener">
+    In the **Create Listener** dialog:
+    - **Name**: A descriptive name (e.g., "HTTP Listener")
+    - **Payload**: Select "Https" or "Http"
+    - **Hosts**: The callback address (e.g., `192.168.1.100`)
+    - **Port (Bind)**: Port to bind on the teamserver (e.g., `443`)
+    - **Port (Conn)**: Port agents use to connect (default: same as bind)
+    - **User Agent**: Browser user agent string
+    - **Headers**: Custom HTTP headers (optional)
+
+    <Tip>
+      For HTTPS listeners, the teamserver will automatically generate a self-signed certificate.
+    </Tip>
+  </Step>
+
+  <Step title="Save the listener">
+    Click **Save**. The listener will appear in the Listeners pane and begin accepting agent connections.
+  </Step>
+</Steps>
+
+## Generate a payload
+
+<Steps>
+  <Step title="Open the Payload generator">
+    In the top menu, click **Attack** → **Payload**.
+  </Step>
+
+  <Step title="Configure the payload">
+    In the Payload dialog:
+    - **Listener**: Select your HTTP/HTTPS listener
+    - **Agent**: Select "Demon"
+    - **Format**: Choose EXE, DLL, or Shellcode
+    - **Architecture**: x64 (x86 coming soon)
+
+    **Optional settings:**
+    - **Sleep**: Agent sleep interval in seconds (default: 2)
+    - **Jitter**: Randomness in sleep timing (default: 15%)
+    - **Indirect Syscall**: Enable for EDR evasion
+    - **Sleep Technique**: Choose obfuscation method:
+      - WaitForSingleObjectEx (no obfuscation)
+      - FOLIAGE
+      - Ekko
+  </Step>
+
+  <Step title="Generate">
+    Click **Generate**. The teamserver will compile your payload.
+
+    <Accordion title="Compilation output">
+      You'll see compilation progress in the client. Once complete, you'll be prompted to save the payload file.
+    </Accordion>
+  </Step>
+
+  <Step title="Save and deploy">
+    Choose a location to save your payload, then deploy it to your target system.
+  </Step>
+</Steps>
+
+## Execute the payload
+
+Transfer your generated payload to the target system and execute it. Within seconds (depending on your sleep configuration), you should see a new agent callback in the Havoc client.
+
+<Note>
+  For testing purposes, you can execute the payload on your local system. In production, use appropriate delivery methods for your engagement.
+</Note>
+
+## Interact with your agent
+
+<Steps>
+  <Step title="View the new session">
+    When an agent checks in, it appears in the session graph and the Sessions pane.
+  </Step>
+
+  <Step title="Interact with the agent">
+    Right-click on the session and select **Interact**.
+
+    A new console tab will open for this agent.
+  </Step>
+
+  <Step title="Run commands">
+    Try some basic commands:
+
+    ```
+    help                    # List all available commands
+    whoami                  # Get current user
+    hostname                # Get computer name
+    pwd                     # Print working directory
+    ps                      # List running processes
+    ```
+  </Step>
+</Steps>
+
+## Essential commands
+
+Here are some frequently used Demon commands:
+
+<CardGroup cols={2}>
+  <Card title="Session management" icon="terminal">
+    - `checkin` - Request full agent check-in
+    - `sleep <seconds>` - Change sleep interval
+    - `exit` - Terminate the agent
+  </Card>
+
+  <Card title="File operations" icon="folder">
+    - `ls` / `dir` - List directory contents
+    - `cd <path>` - Change directory
+    - `download <file>` - Download a file
+    - `upload <local> <remote>` - Upload a file
+  </Card>
+
+  <Card title="Process management" icon="gears">
+    - `ps` - List processes
+    - `kill <pid>` - Terminate a process
+    - `proc module <pid>` - List loaded modules
+  </Card>
+
+  <Card title="Token management" icon="key">
+    - `token getuid` - Get current token UID
+    - `token steal <pid>` - Steal token from process
+    - `token impersonate <id>` - Impersonate a stolen token
+  </Card>
+
+  <Card title="Code execution" icon="code">
+    - `shell <command>` - Execute shell command
+    - `inline-execute <assembly>` - Execute .NET assembly
+    - `shellcode inject <pid> <path>` - Inject shellcode
+  </Card>
+
+  <Card title="Enumeration" icon="magnifying-glass">
+    - `domain` - Get domain information
+    - `net logons` - Show logged-on users
+    - `net sessions` - Show active sessions
+  </Card>
+</CardGroup>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
+  <Card title="Explore Demon features" icon="ghost" href="/demon/overview">
+    Learn about sleep obfuscation, indirect syscalls, and advanced capabilities
+  </Card>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+  <Card title="Configure profiles" icon="file-code" href="/concepts/profiles">
+    Customize your C2 infrastructure with YAOTL profiles
+  </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+  <Card title="Token management" icon="key" href="/advanced/token-management">
+    Master privilege escalation and lateral movement techniques
+  </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Extend Havoc" icon="puzzle-piece" href="/extensibility/overview">
+    Build custom agents, modules, and integrations
+  </Card>
 </CardGroup>
 
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Agent doesn't callback">
+    **Check:**
+    - Firewall rules allow the listener port
+    - Listener is running (`View → Listeners`)
+    - Agent can reach the callback address
+    - Sleep interval hasn't elapsed yet (default: 2 seconds)
+    - Check teamserver logs for connection attempts
+  </Accordion>
+
+  <Accordion title="Payload compilation fails">
+    **Common causes:**
+    - Missing MinGW compiler (run `make ts-build` again)
+    - Incorrect compiler paths in profile
+    - Insufficient disk space
+    
+    **Solution:**
+    Check the teamserver output for specific compiler errors.
+  </Accordion>
+
+  <Accordion title="Client can't connect to teamserver">
+    **Check:**
+    - Teamserver is running
+    - Correct host and port
+    - Credentials match profile configuration
+    - Firewall allows teamserver port (default: 40056)
+  </Accordion>
+
+  <Accordion title="Commands return errors">
+    **Common issues:**
+    - Insufficient privileges (try `token privs-get`)
+    - Blocked by AV/EDR (check event logs)
+    - Invalid syntax (use `help <command>`)
+  </Accordion>
+</AccordionGroup>
+
+## Additional resources
+
+- [Command Reference](/demon/commands) - Complete list of Demon commands
+- [Listener Configuration](/listeners/http-https) - Advanced listener options
+- [Sleep Obfuscation](/demon/sleep-obfuscation) - Evade memory scanners
+- [Python API](/extensibility/python-api) - Automate operations
+
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  For more help, join the [Havoc Discord](https://discord.gg/z3PF3NRDE5) or check the [FAQ](/resources/faq).
 </Note>

@@ -1,0 +1,290 @@
+---
+title: Installation
+description: Complete installation guide for Havoc Framework on Ubuntu, Debian, Kali Linux, and macOS
+---
+
+Havoc Framework works well on Debian 10/11, Ubuntu 20.04/22.04, Kali Linux, and macOS. It's recommended to use the latest versions possible to avoid issues. You'll need a modern version of Qt and Python 3.10.x to avoid build issues.
+
+<Warning>
+If you run into issues during installation, check the [Known Issues](#known-issues) section below and the [GitHub Issues](https://github.com/HavocFramework/Havoc/issues) list.
+</Warning>
+
+## Prerequisites
+
+Before installing Havoc, you'll need to install several dependencies. The requirements vary slightly by operating system.
+
+### Ubuntu 20.04 / 22.04
+
+<Steps>
+  <Step title="Install base dependencies">
+    Install the core packages required for building Havoc:
+    
+    ```bash
+    sudo apt install -y git build-essential apt-utils cmake libfontconfig1 \
+      libglu1-mesa-dev libgtest-dev libspdlog-dev libboost-all-dev \
+      libncurses5-dev libgdbm-dev libssl-dev libreadline-dev libffi-dev \
+      libsqlite3-dev libbz2-dev mesa-common-dev qtbase5-dev qtchooser \
+      qt5-qmake qtbase5-dev-tools libqt5websockets5 libqt5websockets5-dev \
+      qtdeclarative5-dev golang-go qtbase5-dev libqt5websockets5-dev \
+      libspdlog-dev python3-dev libboost-all-dev mingw-w64 nasm
+    ```
+  </Step>
+
+  <Step title="Enable Python 3.10">
+    Ubuntu 20.04/22.04 requires Python 3.10 for the Havoc client. Add the deadsnakes PPA:
+    
+    ```bash
+    sudo add-apt-repository ppa:deadsnakes/ppa
+    sudo apt update
+    sudo apt install python3.10 python3.10-dev
+    ```
+    
+    <Note>
+    If you encounter `fatal error: Python.h: No such file or directory` during build, ensure you have both `python3.10` and `python3.10-dev` packages installed.
+    </Note>
+  </Step>
+</Steps>
+
+### Debian 10/11
+
+<Steps>
+  <Step title="Install base dependencies">
+    Install the core packages required for building Havoc:
+    
+    ```bash
+    sudo apt install -y git build-essential apt-utils cmake libfontconfig1 \
+      libglu1-mesa-dev libgtest-dev libspdlog-dev libboost-all-dev \
+      libncurses5-dev libgdbm-dev libssl-dev libreadline-dev libffi-dev \
+      libsqlite3-dev libbz2-dev mesa-common-dev qtbase5-dev qtchooser \
+      qt5-qmake qtbase5-dev-tools libqt5websockets5 libqt5websockets5-dev \
+      qtdeclarative5-dev golang-go qtbase5-dev libqt5websockets5-dev \
+      libspdlog-dev python3-dev libboost-all-dev mingw-w64 nasm
+    ```
+  </Step>
+
+  <Step title="Setup Python 3.10 from bookworm repository">
+    Debian 10/11 requires adding the bookworm repository for Python 3.10:
+    
+    ```bash
+    echo 'deb http://ftp.de.debian.org/debian bookworm main' | sudo tee -a /etc/apt/sources.list
+    sudo apt update
+    sudo apt install python3-dev python3.10-dev libpython3.10 libpython3.10-dev python3.10
+    ```
+  </Step>
+</Steps>
+
+### Kali Linux
+
+Kali Linux includes most dependencies by default. Install the required packages:
+
+```bash
+sudo apt install -y git build-essential apt-utils cmake libfontconfig1 \
+  libglu1-mesa-dev libgtest-dev libspdlog-dev libboost-all-dev \
+  libncurses5-dev libgdbm-dev libssl-dev libreadline-dev libffi-dev \
+  libsqlite3-dev libbz2-dev mesa-common-dev qtbase5-dev qtchooser \
+  qt5-qmake qtbase5-dev-tools libqt5websockets5 libqt5websockets5-dev \
+  qtdeclarative5-dev golang-go qtbase5-dev libqt5websockets5-dev \
+  libspdlog-dev python3-dev libboost-all-dev mingw-w64 nasm
+```
+
+<Warning>
+Kali has issues loading the proper Monaco font from the embedded Qt resources file. You may experience formatting issues in the Havoc client if not using a monospace/fixed-width font.
+</Warning>
+
+### Arch-based Distributions
+
+```bash
+sudo pacman -S git gcc base-devel cmake fontconfig glu gtest spdlog \
+  boost boost-libs ncurses gdbm openssl readline libffi sqlite bzip2 \
+  mesa qt5-base qt5-websockets python3 nasm mingw-w64-gcc
+```
+
+### macOS
+
+<Steps>
+  <Step title="Install Homebrew">
+    If you don't have Homebrew installed, install it from [brew.sh](https://brew.sh):
+    
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install the required packages using Homebrew:
+    
+    ```bash
+    brew install --cask cmake
+    brew install python@3.10 qt@5 spdlog golang
+    brew link --overwrite qt@5
+    ```
+  </Step>
+</Steps>
+
+## Building Havoc
+
+### Clone the Repository
+
+First, clone the Havoc Framework repository:
+
+```bash
+git clone https://github.com/HavocFramework/Havoc.git
+cd Havoc
+```
+
+### Build the Teamserver
+
+<Steps>
+  <Step title="Install additional Go dependencies">
+    ```bash
+    go mod download golang.org/x/sys
+    go mod download github.com/ugorji/go
+    ```
+  </Step>
+
+  <Step title="Build the teamserver binary">
+    From the Havoc root directory, run:
+    
+    ```bash
+    make ts-build
+    ```
+    
+    This command will:
+    - Run the teamserver installation script
+    - Compile the teamserver with Go
+    - Set capabilities to allow running as a regular user (Linux only)
+    
+    <Note>
+    The teamserver is compiled with the Git commit hash embedded for version tracking.
+    </Note>
+  </Step>
+</Steps>
+
+### Build the Client
+
+<Steps>
+  <Step title="Build the client binary">
+    From the Havoc root directory, run:
+    
+    ```bash
+    make client-build
+    ```
+    
+    This will:
+    - Initialize and update Git submodules
+    - Create the build directory
+    - Clone the official Havoc Modules repository
+    - Build the client using CMake with 4 parallel jobs
+  </Step>
+
+  <Step title="macOS-specific post-build step">
+    On macOS, after the CMake build completes, run:
+    
+    ```bash
+    brew unlink qt && brew link qt
+    ```
+  </Step>
+</Steps>
+
+### Build Both Components
+
+You can build both the teamserver and client in one command:
+
+```bash
+make all
+```
+
+## Verifying the Installation
+
+After building, verify your installation:
+
+<CodeGroup>
+```bash Teamserver
+# Check if the teamserver binary exists
+ls -lh havoc
+
+# Run the teamserver with help flag
+./havoc server --help
+```
+
+```bash Client
+# Check if the client binary exists
+ls -lh ./client/Bin/Havoc
+
+# Run the client
+./havoc client
+```
+</CodeGroup>
+
+## Data Storage
+
+All files created during interaction with the Teamserver are stored within the `/Havoc/data/*` folder, including:
+- Agent loot and downloads
+- SQLite database (havoc.db)
+- Teamserver certificates
+- Cross-compilation toolchains
+
+## WSL Support
+
+To run the Havoc client on Windows Subsystem for Linux (WSL), you need to install the appropriate GUI driver:
+
+1. Navigate to the [Microsoft WSL GUI Apps documentation](https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps)
+2. Download and install the required driver for your system
+3. Follow the standard Linux installation steps above
+
+## Known Issues
+
+<Accordion title="fatal error: Python.h: No such file or directory">
+  This error occurs when Python development files are not installed. Ensure you have Python 3.10 and its development package:
+  
+  ```bash
+  sudo apt install build-essential
+  sudo add-apt-repository ppa:deadsnakes/ppa
+  sudo apt update
+  sudo apt install python3.10 python3.10-dev
+  ```
+</Accordion>
+
+<Accordion title="incomplete type 'QTime' used in nested name specifier">
+  You probably need a newer version of Qt. If you are using Ubuntu, try adding a backports PPA and installing the latest Qt6 development packages.
+  
+  See [GitHub Issue #95](https://github.com/HavocFramework/Havoc/issues/95) for more details.
+</Accordion>
+
+<Accordion title="Known compiler issue: Couldn't compile implant: exit status 1">
+  This is typically related to the MinGW compiler setup. Check that all cross-compilation dependencies are properly installed.
+  
+  See [GitHub Issue #105](https://github.com/HavocFramework/Havoc/issues/105) for troubleshooting steps.
+</Accordion>
+
+<Accordion title="Kali Linux font/formatting issues">
+  Kali has issues loading the proper Monaco font from the embedded Qt resources file. The Havoc client requires a monospace/fixed-width font for proper formatting.
+  
+  You can manually configure a monospace font in your system settings to work around this issue.
+</Accordion>
+
+## Cleanup
+
+If you need to clean your build and start fresh:
+
+<CodeGroup>
+```bash Clean Everything
+make clean
+```
+
+```bash Clean Teamserver Only
+make ts-cleanup
+```
+
+```bash Clean Client Only
+make client-cleanup
+```
+</CodeGroup>
+
+## Next Steps
+
+Now that you have Havoc installed, proceed to the [Quick Start Guide](/quickstart) to learn how to:
+- Start the teamserver
+- Connect the client
+- Create listeners
+- Generate and deploy agents

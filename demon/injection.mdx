@@ -1,0 +1,742 @@
+---
+title: Injection Techniques
+description: Process injection methods, spawn configurations, and OPSEC considerations
+---
+
+## Overview
+
+Demon supports multiple process injection techniques for executing shellcode or DLLs in remote processes. The injection system offers flexibility in choosing between stealthy syscall-based methods and faster Win32 API approaches.
+
+## Injection Methods
+
+Demon distinguishes between two primary injection scenarios:
+
+<CardGroup cols={2}>
+  <Card title="Inject" icon="syringe">
+    Inject code into an **existing process** by PID.
+    
+    Requires:
+    - Target process ID
+    - Sufficient permissions
+    - Compatible architecture
+  </Card>
+  <Card title="Spawn" icon="baby">
+    Create a new **sacrificial process** and inject code (fork & run).
+    
+    Advantages:
+    - Controlled process environment
+    - No target process required
+    - Cleaner OPSEC
+  </Card>
+</CardGroup>
+
+## Injection Techniques
+
+### Technique 1: Win32 API
+
+**Value**: `INJECTION_TECHNIQUE_WIN32` (1)
+
+Uses high-level Win32 APIs for injection operations.
+
+```yaml
+Demon:
+  Injection:
+    Technique: 1
+```
+
+<Accordion title="API Call Flow">
+  **For Spawn:**
+  1. `CreateProcessA` - Create suspended process
+  
+  **Memory Operations:**
+  2. `VirtualAllocEx` - Allocate memory
+  3. `WriteProcessMemory` - Write shellcode
+  4. `VirtualProtectEx` - Change to RX protection
+  
+  **Thread Creation:**
+  5. `CreateRemoteThread` - Start execution
+  6. `ResumeThread` - Resume main thread (if spawned)
+</Accordion>
+
+**Characteristics:**
+- ✅ Fast and stable
+- ✅ Simple implementation
+- ✅ Compatible with all targets
+- ❌ Heavily hooked by EDR
+- ❌ High detection rate
+- ❌ Leaves obvious forensic traces
+
+**When to use:**
+- Testing environments
+- No EDR present
+- Speed prioritized over stealth
+
+---
+
+### Technique 2: Syscall
+
+**Value**: `INJECTION_TECHNIQUE_SYSCALL` (2)
+
+**Recommended** - Uses indirect syscalls to bypass userland hooks.
+
+```yaml
+Demon:
+  Injection:
+    Technique: 2
+```
+
+<Accordion title="API Call Flow">
+  **For Spawn:**
+  1. `CreateProcessA` - Create suspended process (no syscall alternative)
+  
+  **Memory Operations:**
+  2. `NtAllocateVirtualMemory*` - Allocate memory
+  3. `NtWriteVirtualMemory*` - Write shellcode  
+  4. `NtProtectVirtualMemory*` - Change to RX protection
+  
+  **Thread Creation:**
+  5. `NtCreateThreadEx*` - Start execution
+  6. `NtResumeThread*` - Resume thread
+  
+  _* = Indirect syscall_
+</Accordion>
+
+**Characteristics:**
+- ✅ Bypasses userland EDR hooks
+- ✅ Stealthy execution
+- ✅ Production-ready
+- ✅ Return address spoofing available
+- ❌ Slightly slower than Win32
+- ❌ More complex implementation
+
+**When to use:**
+- Production operations
+- EDR present
+- Stealth prioritized
+
+**Implementation Details:**
+
+```c
+// Memory allocation via syscall
+DWORD MmVirtualAlloc(
+    DWORD Method,
+    HANDLE hProcess,
+    SIZE_T Size,
+    DWORD Protection
+) {
+    if (Method == DX_MEM_SYSCALL) {
+        return SysNtAllocateVirtualMemory(
+            hProcess,
+            &Address,
+            0,
+            &Size,
+            MEM_COMMIT | MEM_RESERVE,
+            Protection
+        );
+    } else {
+        return Instance->Win32.VirtualAllocEx(
+            hProcess,
+            NULL,
+            Size,
+            MEM_COMMIT | MEM_RESERVE,
+            Protection
+        );
+    }
+}
+```
+
+---
+
+### Technique 3: APC Injection
+
+**Value**: `INJECTION_TECHNIQUE_APC` (3)
+
+Queues Asynchronous Procedure Calls (APCs) to existing threads.
+
+```yaml
+Demon:
+  Injection:
+    Technique: 3
+```
+
+<Accordion title="API Call Flow">
+  1. `NtAllocateVirtualMemory*` - Allocate memory
+  2. `NtWriteVirtualMemory*` - Write shellcode
+  3. `NtProtectVirtualMemory*` - Set RX protection
+  4. Enumerate threads in target process
+  5. For each thread:
+     - `NtOpenThread*` - Open thread
+     - `NtQueueApcThread*` - Queue APC pointing to shellcode
+  6. APCs execute when threads enter alertable wait state
+</Accordion>
+
+**Characteristics:**
+- ✅ No new thread creation
+- ✅ Stealthy (uses existing threads)
+- ✅ Bypasses some thread creation monitoring
+- ❌ Requires alertable wait state
+- ❌ Execution timing unpredictable
+- ❌ May not execute immediately
+
+**When to use:**
+- Target has alertable threads
+- Thread creation is monitored
+- Delayed execution acceptable
+
+<Warning>
+  APC injection requires target threads to enter an alertable wait state. Execution may be delayed or may not occur if threads never wait alertably.
+</Warning>
+
+---
+
+## Thread Creation Methods
+
+When creating threads in remote processes, Demon supports multiple methods:
+
+### DX_THREAD_WIN32
+
+Uses `CreateRemoteThread` API.
+
+```c
+HANDLE hThread = Instance->Win32.CreateRemoteThread(
+    hProcess,
+    NULL,
+    0,
+    EntryPoint,
+    Parameter,
+    0,
+    &ThreadId
+);
+```
+
+**Pros**: Simple, widely compatible  
+**Cons**: Heavily monitored by EDR
+
+### DX_THREAD_SYSCALL
+
+**Recommended** - Uses `NtCreateThreadEx` via indirect syscall.
+
+```c
+NTSTATUS status = SysNtCreateThreadEx(
+    &hThread,
+    THREAD_ALL_ACCESS,
+    NULL,
+    hProcess,
+    EntryPoint,
+    Parameter,
+    FALSE,  // Not suspended
+    0,
+    0x1000 * 20,  // Stack size
+    0x1000 * 20,  // Max stack
+    NULL
+);
+```
+
+**Pros**: Bypasses hooks, stealthy  
+**Cons**: Requires syscall infrastructure
+
+### DX_THREAD_APC
+
+Queues an APC instead of creating a thread.
+
+```c
+for (each thread in process) {
+    HANDLE hThread = OpenThread(thread_id);
+    NtQueueApcThread(
+        hThread,
+        EntryPoint,
+        Parameter,
+        NULL,
+        NULL
+    );
+}
+```
+
+**Pros**: No thread creation, stealthy  
+**Cons**: Unreliable execution timing
+
+---
+
+## Memory Allocation Methods
+
+### DX_MEM_WIN32
+
+Uses `VirtualAllocEx` for memory operations.
+
+```c
+LPVOID memory = Instance->Win32.VirtualAllocEx(
+    hProcess,
+    NULL,
+    size,
+    MEM_COMMIT | MEM_RESERVE,
+    PAGE_READWRITE
+);
+```
+
+**Configuration:**
+```bash
+config memory alloc 1  # Win32
+```
+
+### DX_MEM_SYSCALL
+
+**Recommended** - Uses `NtAllocateVirtualMemory` via indirect syscall.
+
+```c
+NTSTATUS status = SysNtAllocateVirtualMemory(
+    hProcess,
+    &address,
+    0,
+    &size,
+    MEM_COMMIT | MEM_RESERVE,
+    PAGE_READWRITE
+);
+```
+
+**Configuration:**
+```bash
+config memory alloc 2  # Syscall
+```
+
+---
+
+## Spawn Process Configuration
+
+When using fork & run (spawn) techniques, Demon spawns a sacrificial process. Configure these in the profile or at runtime:
+
+### Profile Configuration
+
+```yaml
+Demon:
+  Injection:
+    Spawn64: "C:\\Windows\\System32\\notepad.exe"
+    Spawn32: "C:\\Windows\\SysWOW64\\notepad.exe"
+```
+
+### Runtime Configuration
+
+```bash
+# Set x64 spawn process
+config injection spawn64 C:\Windows\System32\dllhost.exe
+
+# Set x86 spawn process  
+config injection spawn32 C:\Windows\SysWOW64\dllhost.exe
+```
+
+### Recommended Spawn Processes
+
+<Tabs>
+  <Tab title="General Purpose">
+    **notepad.exe**
+    ```
+    x64: C:\Windows\System32\notepad.exe
+    x86: C:\Windows\SysWOW64\notepad.exe
+    ```
+    
+    - ✅ Always available
+    - ✅ Commonly spawned
+    - ❌ GUI application (creates window)
+  </Tab>
+  
+  <Tab title="Background Service">
+    **dllhost.exe**
+    ```
+    x64: C:\Windows\System32\dllhost.exe
+    x86: C:\Windows\SysWOW64\dllhost.exe
+    ```
+    
+    - ✅ COM surrogate (normal to see many)
+    - ✅ No GUI
+    - ✅ Blends with system activity
+  </Tab>
+  
+  <Tab title="System Process">
+    **RuntimeBroker.exe**
+    ```
+    x64: C:\Windows\System32\RuntimeBroker.exe
+    ```
+    
+    - ✅ Windows 10+ only
+    - ✅ Common system process
+    - ✅ Medium integrity
+    - ❌ May be monitored
+  </Tab>
+  
+  <Tab title="Error Reporting">
+    **WerFault.exe**
+    ```
+    x64: C:\Windows\System32\WerFault.exe
+    x86: C:\Windows\SysWOW64\WerFault.exe
+    ```
+    
+    - ✅ Windows Error Reporting
+    - ✅ Often exempted from monitoring
+    - ✅ Legitimate to spawn and exit
+  </Tab>
+</Tabs>
+
+<Tip>
+  **Environment-Specific Choices:**
+  - **Corporate**: Use common business apps (outlook.exe, excel.exe)
+  - **Servers**: Use service processes (w3wp.exe, svchost.exe)
+  - **Developer machines**: Use dev tools (devenv.exe, msbuild.exe)
+</Tip>
+
+---
+
+## Command Usage
+
+### Shellcode Injection
+
+Inject shellcode into an existing process:
+
+```bash
+shellcode inject [arch] [pid] [path]
+```
+
+**Example:**
+```bash
+shellcode inject x64 1234 /root/payload.bin
+```
+
+**Process:**
+1. Open handle to target process (PID 1234)
+2. Verify architecture matches
+3. Allocate memory based on configured method
+4. Write shellcode to allocated memory
+5. Change protection to PAGE_EXECUTE_READ
+6. Create thread at shellcode entry point
+
+### Shellcode Spawn
+
+Spawn a new process and inject shellcode:
+
+```bash
+shellcode spawn [arch] [path]
+```
+
+**Example:**
+```bash
+shellcode spawn x64 /root/payload.bin
+```
+
+**Process:**
+1. Create configured spawn process in suspended state
+2. Allocate memory in new process
+3. Write shellcode
+4. Change protection to PAGE_EXECUTE_READ  
+5. Create remote thread
+6. Resume main thread
+
+### DLL Injection
+
+Inject a reflective DLL:
+
+```bash
+inject-dll [pid] [path]
+```
+
+**Features:**
+- Uses reflective loader
+- Supports DLL arguments
+- Returns output from DLL
+
+---
+
+## OPSEC Considerations
+
+### Architecture Mismatch
+
+Demon validates architecture before injection:
+
+<AccordionGroup>
+  <Accordion title="x86 Demon → x86 Process">
+    ✅ **Supported**
+    
+    Both same architecture, full compatibility.
+  </Accordion>
+  
+  <Accordion title="x64 Demon → x64 Process">
+    ✅ **Supported**
+    
+    Both same architecture, full compatibility.
+  </Accordion>
+  
+  <Accordion title="x64 Demon → x86 Process (WoW64)">
+    ⚠️ **Supported with limitations**
+    
+    Requires Heaven's Gate technique for 64→32-bit transitions.
+    Not all injection methods work reliably.
+  </Accordion>
+  
+  <Accordion title="x86 Demon → x64 Process">
+    ❌ **Not Supported**
+    
+    32-bit process cannot inject into 64-bit process.
+    Error: `INJECT_ERROR_PROCESS_ARCH_MISMATCH`
+  </Accordion>
+</AccordionGroup>
+
+### Process Permissions
+
+Injection requires specific permissions:
+
+**Minimum required:**
+- `PROCESS_VM_OPERATION` - Memory operations
+- `PROCESS_VM_WRITE` - Write shellcode
+- `PROCESS_CREATE_THREAD` - Create execution thread
+
+**Opening process:**
+```c
+HANDLE hProcess = ProcessOpen(pid, PROCESS_ALL_ACCESS);
+```
+
+**If access denied:**
+1. Steal token with `SeDebugPrivilege`
+2. Impersonate SYSTEM or high-privileged user
+3. Retry injection
+
+### Detection Vectors
+
+<Tabs>
+  <Tab title="Memory Scanning">
+    **Risk**: EDR scans for suspicious memory patterns
+    
+    **Indicators:**
+    - Unbacked memory regions (not from files)
+    - RWX memory pages
+    - Known shellcode signatures
+    - Anomalous memory allocations
+    
+    **Mitigation:**
+    - Use RW during write, then change to RX
+    - Encrypt shellcode before writing
+    - Use existing executable memory regions
+    - Avoid large contiguous allocations
+  </Tab>
+  
+  <Tab title="API Monitoring">
+    **Risk**: EDR hooks injection-related APIs
+    
+    **Monitored APIs:**
+    - `VirtualAllocEx`
+    - `WriteProcessMemory`
+    - `CreateRemoteThread`
+    - `SetThreadContext`
+    - `QueueUserAPC`
+    
+    **Mitigation:**
+    - Use indirect syscalls
+    - Avoid Win32 injection methods
+    - Space out API calls
+    - Use legitimate process patterns
+  </Tab>
+  
+  <Tab title="Behavioral Analysis">
+    **Risk**: EDR detects suspicious process behaviors
+    
+    **Suspicious patterns:**
+    - Office app creating notepad.exe
+    - Short-lived processes
+    - Process spawning then network activity
+    - Unusual parent-child relationships
+    
+    **Mitigation:**
+    - Choose contextually appropriate spawn processes
+    - Use existing processes when possible
+    - Space out operations over time
+    - Mimic normal application behavior
+  </Tab>
+  
+  <Tab title="Thread Start Addresses">
+    **Risk**: EDR checks thread start addresses
+    
+    **Suspicious:**
+    - Threads starting in unbacked memory
+    - Threads starting outside module boundaries
+    - Multiple threads with same start address
+    
+    **Mitigation:**
+    - Use RX memory (not RWX)
+    - Consider module stomping
+    - Use APC injection (no new threads)
+  </Tab>
+</Tabs>
+
+### Best Practices
+
+<Steps>
+  <Step title="Choose Appropriate Technique">
+    - **Low security**: Win32 (speed)
+    - **Medium security**: Syscall
+    - **High security**: Syscall + APC
+  </Step>
+  
+  <Step title="Select Context-Appropriate Target">
+    Match spawn process to environment:
+    - Corporate: Business applications
+    - Server: Service processes
+    - Developer: Development tools
+  </Step>
+  
+  <Step title="Verify Permissions">
+    Ensure you have necessary privileges:
+    ```bash
+    token privs-get  # Enable all privileges
+    token getuid     # Verify current context
+    ```
+  </Step>
+  
+  <Step title="Test Architecture Compatibility">
+    ```bash
+    proc list  # Check target architecture
+    ```
+    Ensure match before injection.
+  </Step>
+  
+  <Step title="Monitor for Detection">
+    After injection:
+    - Watch for process termination
+    - Check callback success
+    - Verify no alerts in target environment
+  </Step>
+</Steps>
+
+---
+
+## Error Handling
+
+### Common Errors
+
+<AccordionGroup>
+  <Accordion title="INJECT_ERROR_INVALID_PARAM">
+    **Cause**: Missing or invalid parameters
+    
+    **Check:**
+    - PID specified and valid
+    - Shellcode path exists
+    - Architecture specified correctly
+  </Accordion>
+  
+  <Accordion title="INJECT_ERROR_PROCESS_ARCH_MISMATCH">
+    **Cause**: Architecture incompatibility
+    
+    **Solutions:**
+    - Use matching architecture payload
+    - Target different process
+    - Use x64 Demon for flexibility
+  </Accordion>
+  
+  <Accordion title="INJECT_ERROR_FAILED">
+    **Cause**: Generic injection failure
+    
+    **Common reasons:**
+    - Insufficient permissions
+    - Protected process (PPL)
+    - Memory allocation failed
+    - EDR blocked operation
+    
+    **Debug:**
+    ```bash
+    # Check privileges
+    token privs-list
+    
+    # Try with elevated token
+    token steal [high_priv_pid]
+    token impersonate [id]
+    
+    # Retry injection
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Advanced Techniques
+
+### Module Stomping
+
+Overwrite existing module memory instead of allocating new regions.
+
+**Advantages:**
+- No suspicious unbacked memory
+- Appears as part of legitimate module
+- Thread starts in known module
+
+**Implementation**: (Not built-in, requires custom BOF)
+
+### Process Hollowing
+
+Create process in suspended state, unmap original image, map payload.
+
+**Advantages:**
+- Process appears legitimate
+- No remote memory allocation
+- Complex to detect
+
+**Implementation**: (Not built-in, requires custom BOF)
+
+### Thread Hijacking
+
+Suspend thread, modify context to point to shellcode, resume.
+
+**Advantages:**
+- No thread creation
+- Uses existing thread
+- Stealthy
+
+**Implementation**: (Not built-in, requires custom BOF)
+
+---
+
+## Configuration Reference
+
+### Profile Configuration
+
+```yaml
+Demon:
+  Injection:
+    # Injection technique
+    Technique: 2  # 1=Win32, 2=Syscall, 3=APC
+    
+    # Spawn processes
+    Spawn64: "C:\\Windows\\System32\\dllhost.exe"
+    Spawn32: "C:\\Windows\\SysWOW64\\dllhost.exe"
+```
+
+### Runtime Configuration
+
+```bash
+# View current config
+config
+
+# Change injection technique
+config injection technique 2
+
+# Change memory allocation method
+config memory alloc 2     # 1=Win32, 2=Syscall
+config memory execute 2   # 1=Win32, 2=Syscall
+
+# Change spawn processes
+config injection spawn64 C:\Windows\System32\notepad.exe
+config injection spawn32 C:\Windows\SysWOW64\notepad.exe
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sleep Obfuscation" icon="moon" href="/demon/sleep-obfuscation">
+    Configure memory encryption during sleep
+  </Card>
+  <Card title="Features Overview" icon="star" href="/demon/features">
+    Explore all Demon capabilities
+  </Card>
+  <Card title="Command Reference" icon="book" href="/demon/commands">
+    Complete command documentation
+  </Card>
+  <Card title="Generate Payloads" icon="hammer" href="/demon/generation">
+    Create configured Demon agents
+  </Card>
+</CardGroup>

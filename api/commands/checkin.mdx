@@ -1,0 +1,166 @@
+---
+title: checkin
+description: Request a checkin from the Demon agent to display current configuration and system information
+---
+
+## Overview
+
+The `checkin` command requests the Demon agent to send a fresh checkin packet containing comprehensive metadata about the agent's configuration, host system, process information, and operating system details.
+
+## Syntax
+
+```bash
+checkin
+```
+
+## Parameters
+
+This command takes no parameters.
+
+## Return Values
+
+The `checkin` command returns detailed information organized into several categories:
+
+<ResponseField name="Teamserver" type="object">
+  <ResponseField name="Session Path" type="string">
+    Path where agent session data is stored on the teamserver
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="Meta Data" type="object">
+  <ResponseField name="Agent ID" type="string">
+    Unique identifier for the agent session (hex format)
+  </ResponseField>
+  <ResponseField name="Magic Value" type="hex">
+    Magic value used for validation (0xDEADBEEF)
+  </ResponseField>
+  <ResponseField name="First Call In" type="timestamp">
+    Timestamp of the agent's initial callback
+  </ResponseField>
+  <ResponseField name="Last Call In" type="timestamp">
+    Timestamp of the agent's most recent callback
+  </ResponseField>
+  <ResponseField name="AES Key" type="string">
+    32-byte AES encryption key (hex encoded)
+  </ResponseField>
+  <ResponseField name="AES IV" type="string">
+    16-byte AES initialization vector (hex encoded)
+  </ResponseField>
+  <ResponseField name="Sleep Delay" type="integer">
+    Current sleep interval in seconds
+  </ResponseField>
+  <ResponseField name="Sleep Jitter" type="integer">
+    Jitter percentage applied to sleep delay
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="Host Info" type="object">
+  <ResponseField name="Host Name" type="string">
+    Computer hostname
+  </ResponseField>
+  <ResponseField name="User Name" type="string">
+    Current user context
+  </ResponseField>
+  <ResponseField name="Domain Name" type="string">
+    Domain or workgroup name
+  </ResponseField>
+  <ResponseField name="Internal IP" type="string">
+    Internal IP address(es)
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="Process Info" type="object">
+  <ResponseField name="Process Name" type="string">
+    Name of the process hosting the agent
+  </ResponseField>
+  <ResponseField name="Process Arch" type="string">
+    Process architecture (x86, x64, IA64, or Unknown)
+  </ResponseField>
+  <ResponseField name="Process ID" type="integer">
+    Process identifier (PID)
+  </ResponseField>
+  <ResponseField name="Thread ID" type="integer">
+    Thread identifier (TID)
+  </ResponseField>
+  <ResponseField name="Process Path" type="string">
+    Full path to the process executable
+  </ResponseField>
+  <ResponseField name="Process Elevated" type="boolean">
+    Whether the process has elevated privileges
+  </ResponseField>
+  <ResponseField name="Base Address" type="hex">
+    Base address of the agent in memory
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="Operating System" type="object">
+  <ResponseField name="Version" type="string">
+    Windows version string
+  </ResponseField>
+  <ResponseField name="Build" type="string">
+    OS build number
+  </ResponseField>
+  <ResponseField name="Architecture" type="string">
+    OS architecture (x86, x64/AMD64, ARM, ARM64, Itanium-based)
+  </ResponseField>
+</ResponseField>
+
+## Examples
+
+### Basic Usage
+
+```bash
+checkin
+```
+
+### Example Output
+
+```
+Teamserver:
+  - Session Path       : /data/agents/deadbeef
+
+Meta Data:
+  - Agent ID           : deadbeef
+  - Magic Value        : deadbeef
+  - First Call In      : 2024-03-04 10:30:15
+  - Last  Call In      : 2024-03-04 12:45:22
+  - AES Key            : a1b2c3d4e5f6...
+  - AES IV             : 1a2b3c4d5e6f...
+  - Sleep Delay        : 60
+  - Sleep Jitter       : 20
+
+Host Info:
+  - Host Name          : WORKSTATION01
+  - User Name          : jdoe
+  - Domain Name        : CORP
+  - Internal IP        : 10.0.2.15
+
+Process Info:
+  - Process Name       : explorer.exe
+  - Process Arch       : x64
+  - Process ID         : 4521
+  - Thread ID          : 2341
+  - Process Path       : C:\Windows\explorer.exe
+  - Process Elevated   : false
+  - Base Address       : 0x7ff612340000
+
+Operating System:
+  - Version            : Windows 10
+  - Build              : 19045
+  - Architecture       : x64/AMD64
+```
+
+## Use Cases
+
+- **Session Verification**: Confirm the agent is still active and responsive
+- **Configuration Review**: Check current sleep settings and encryption parameters
+- **Context Awareness**: Verify user context and privilege level before running commands
+- **Troubleshooting**: Gather diagnostic information when investigating agent behavior
+- **Reconnaissance**: Collect host and process information for situational awareness
+
+## Notes
+
+- The `checkin` command does not modify any agent configuration
+- Encryption keys are regenerated during each checkin and automatically synchronized with the teamserver
+- This command is useful after modifying agent configuration to verify changes took effect
+- Agent ID is derived from session initialization and remains constant throughout the session

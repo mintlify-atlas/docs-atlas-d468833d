@@ -1,0 +1,238 @@
+---
+title: Extensibility Overview
+description: Introduction to Havoc Framework's extensibility system
+---
+
+Havoc Framework provides a comprehensive extensibility system that allows you to customize and extend its functionality through multiple mechanisms:
+
+## Extensibility Components
+
+<CardGroup cols={2}>
+  <Card title="Custom Agents" icon="robot" href="/extensibility/custom-agents">
+    Build third-party agents using the Python Service API
+  </Card>
+  <Card title="External C2" icon="server" href="/extensibility/external-c2">
+    Integrate external command and control channels
+  </Card>
+  <Card title="Python API" icon="python" href="/extensibility/python-api">
+    Leverage the havoc-py API for automation and customization
+  </Card>
+  <Card title="Modules" icon="puzzle-piece" href="/extensibility/modules">
+    Extend Demon agent capabilities with loadable modules
+  </Card>
+</CardGroup>
+
+## Architecture
+
+Havoc's extensibility is built on three core pillars:
+
+### Service API
+
+The Service API provides a WebSocket-based communication channel between the Teamserver and external services. It enables:
+
+- Custom agent registration and management
+- External C2 listener integration
+- Bidirectional command/response flow
+- Authentication using SHA3-256 hashing
+
+<CodeGroup>
+```python Service Configuration
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+```
+
+```python Connection Example
+from havoc.service import HavocService
+
+havoc_service = HavocService(
+    endpoint="ws://0.0.0.0:40056/service-endpoint",
+    password="service-password"
+)
+```
+</CodeGroup>
+
+### Python API (havoc-py)
+
+The Python API provides classes and utilities for:
+
+- **AgentType**: Define custom agent implementations
+- **Command**: Create custom commands with parameters
+- **Packer**: Build binary command payloads
+- **HavocService**: Manage service connections
+
+See the [Python API documentation](/extensibility/python-api) for detailed usage.
+
+### Module System
+
+Modules extend the Demon agent's capabilities without modifying the core codebase:
+
+- Load at runtime from the Havoc client
+- Execute in fork & run processes
+- Integrate with existing commands
+- Support both managed (.NET) and unmanaged code
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Building a Custom Agent">
+    Create agents in languages like Python, Go, or Rust that communicate with the Teamserver through the Service API. Perfect for:
+    - Cross-platform agents (Linux, macOS)
+    - Specialized communication channels
+    - Custom payload formats
+    - Integration with existing tools
+
+    **Example**: [Talon](https://github.com/HavocFramework/Talon) - A Python-based custom agent
+  </Accordion>
+
+  <Accordion title="External C2 Integration">
+    Route agent traffic through external channels:
+    - Domain fronting
+    - Custom protocols (DNS, ICMP)
+    - Cloud services (AWS, Azure)
+    - Third-party C2 frameworks
+
+    The Teamserver acts as a proxy, parsing agent packets while you control the transport layer.
+  </Accordion>
+
+  <Accordion title="Creating Modules">
+    Extend Demon capabilities with modules:
+    - **Powerpick**: Execute unmanaged PowerShell
+    - **InvokeAssembly**: Run .NET assemblies with custom CLR versions
+    - Custom COFF loaders
+    - Persistence mechanisms
+  </Accordion>
+
+  <Accordion title="Automation & Scripting">
+    Use the Python API for:
+    - Automated tasking workflows
+    - Custom UI integrations
+    - Event-driven responses
+    - Batch operations across agents
+  </Accordion>
+</AccordionGroup>
+
+## Getting Started
+
+<Steps>
+  <Step title="Enable Service API">
+    Add a `Service` directive to your Teamserver profile:
+
+    ```hcl profiles/havoc.yaotl
+    Service {
+        Endpoint = "service-endpoint"
+        Password = "service-password"
+    }
+    ```
+  </Step>
+
+  <Step title="Install havoc-py">
+    The Python API is available at [github.com/HavocFramework/havoc-py](https://github.com/HavocFramework/havoc-py)
+
+    ```bash
+    git clone https://github.com/HavocFramework/havoc-py
+    cd havoc-py
+    pip install .
+    ```
+  </Step>
+
+  <Step title="Choose Your Extension Path">
+    - **Custom Agent**: Follow the [Custom Agents guide](/extensibility/custom-agents)
+    - **External C2**: See [External C2 documentation](/extensibility/external-c2)
+    - **Module**: Check the [Modules guide](/extensibility/modules)
+  </Step>
+</Steps>
+
+## Service API Protocol
+
+The Service API uses JSON over WebSocket with the following message structure:
+
+```json
+{
+  "Head": {
+    "Type": "Agent|Listener|Register|RegisterAgent"
+  },
+  "Body": {
+    "Type": "<operation-type>",
+    // ... operation-specific fields
+  }
+}
+```
+
+### Message Types
+
+| Head Type | Body Types | Purpose |
+|-----------|------------|----------|
+| `Register` | - | Initial authentication |
+| `RegisterAgent` | - | Register a new agent type |
+| `Agent` | `AgentRegister`, `AgentTask`, `AgentResponse`, `AgentOutput`, `AgentBuild` | Agent operations |
+| `Listener` | `ListenerAdd`, `ListenerStart`, `ListenerExC2`, `ListenerTransmit` | Listener management |
+
+<Note>
+  The Service API authenticates using SHA3-256 hashed passwords. All subsequent messages must be sent over the authenticated WebSocket connection.
+</Note>
+
+## Examples Repository
+
+<CardGroup cols={2}>
+  <Card title="Talon Agent" icon="github" href="https://github.com/HavocFramework/Talon">
+    Reference implementation of a custom agent in Python
+  </Card>
+  <Card title="Official Modules" icon="github" href="https://github.com/HavocFramework/Modules">
+    Collection of official Havoc modules including Powerpick and InvokeAssembly
+  </Card>
+</CardGroup>
+
+## Architecture Diagram
+
+```
+┌─────────────────┐
+│  Havoc Client   │
+└────────┬────────┘
+         │
+         │ WebSocket
+         │
+┌────────▼────────┐      ┌──────────────────┐
+│   Teamserver    │◄─────┤  Python Scripts  │
+│                 │      │  (havoc-py API)  │
+│  ┌───────────┐  │      └──────────────────┘
+│  │ Service   │  │
+│  │ API       │◄─┼──────┐
+│  └───────────┘  │      │
+│                 │      │ WebSocket (Service)
+│  ┌───────────┐  │      │
+│  │ HTTP/S    │  │      ▼
+│  │ Listener  │  │  ┌─────────────────┐
+│  └───────────┘  │  │ Custom Agents   │
+│                 │  │ (Talon, etc.)   │
+│  ┌───────────┐  │  └─────────────────┘
+│  │ External  │  │
+│  │ C2        │◄─┼──────┐
+│  └───────────┘  │      │
+└────────┬────────┘      │
+         │               │
+         │ HTTP/S        │ Custom Protocol
+         │               │
+    ┌────▼────┐     ┌────▼────────┐
+    │  Demon  │     │   External  │
+    │  Agent  │     │   Transport │
+    └─────────┘     └─────────────┘
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build a Custom Agent" href="/extensibility/custom-agents">
+    Learn how to create agents in any language
+  </Card>
+  <Card title="Explore the Python API" href="/extensibility/python-api">
+    Dive into havoc-py classes and methods
+  </Card>
+  <Card title="Create a Module" href="/extensibility/modules">
+    Extend Demon with custom functionality
+  </Card>
+  <Card title="Setup External C2" href="/extensibility/external-c2">
+    Integrate custom transport channels
+  </Card>
+</CardGroup>

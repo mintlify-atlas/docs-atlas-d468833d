@@ -1,0 +1,127 @@
+---
+title: HavocService
+description: Connect to the Havoc Teamserver and register custom agents
+icon: server
+---
+
+## Overview
+
+The `HavocService` class provides the connection layer between your custom agent and the Havoc Teamserver. It handles authentication, websocket communication, and agent registration through the Service API endpoint.
+
+## Initialization
+
+<ParamField path="endpoint" type="string" required>
+  The websocket URL of the Teamserver service endpoint. Must match the `Endpoint` configured in the Teamserver profile's `Service` directive.
+  
+  Format: `ws://<host>:<port>/<service-endpoint>`
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  Authentication password for the service endpoint. Must match the `Password` configured in the Teamserver profile's `Service` directive.
+</ParamField>
+
+## Basic Usage
+
+```python
+from havoc.service import HavocService
+from havoc.agent import AgentType
+
+# Initialize the service connection
+havoc_service = HavocService(
+    endpoint="ws://0.0.0.0:40056/service-endpoint",
+    password="service-password"
+)
+```
+
+## Methods
+
+### register_agent()
+
+Registers a custom agent type with the Teamserver, making it available in the Havoc client interface.
+
+<ParamField path="agent" type="AgentType" required>
+  An instance of your custom agent class that extends `AgentType`.
+</ParamField>
+
+**Example:**
+
+```python
+from havoc.service import HavocService
+from havoc.agent import AgentType
+
+class MyCustomAgent(AgentType):
+    Name = "CustomAgent"
+    Author = "@YourHandle"
+    Version = "0.1"
+    Description = "A custom agent implementation"
+    MagicValue = 0x12345678
+
+    # Define build configuration
+    def buildconfig(self) -> dict:
+        return {
+            "Sleep": "5",
+            "Jitter": "20"
+        }
+
+    # Handle agent responses
+    def response(self, response: dict) -> None:
+        agent_header = response["AgentHeader"]
+        agent_response = self.decrypt_response(agent_header, response)
+        # Process the response
+
+agent = MyCustomAgent()
+
+havoc_service = HavocService(
+    endpoint="ws://0.0.0.0:40056/service-endpoint",
+    password="service-password"
+)
+
+# Register the agent with the Teamserver
+havoc_service.register_agent(agent)
+```
+
+## Teamserver Configuration
+
+Before connecting your Python service, configure the Teamserver profile with a `Service` directive:
+
+```hcl
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+```
+
+This creates a service endpoint at:
+```
+<teamserver-host>:<teamserver-port>/service-endpoint
+```
+
+## Connection Flow
+
+1. **Configure Service**: Add `Service` directive to Teamserver profile
+2. **Start Teamserver**: Launch with the configured profile
+3. **Initialize HavocService**: Create service instance with matching endpoint and password
+4. **Register Agent**: Call `register_agent()` with your custom agent implementation
+5. **Handle Communication**: Agent automatically routes commands to/from Teamserver
+
+## Security Notes
+
+- The service endpoint requires authentication via the configured password
+- Communication uses WebSocket protocol (ws:// or wss://)
+- All agent communications should be encrypted using your agent's encryption scheme
+- Store credentials securely and avoid hardcoding passwords in production
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="AgentType" icon="robot" href="/api/python/agent">
+    Learn how to create custom agent implementations
+  </Card>
+  <Card title="Commands" icon="terminal" href="/api/python/commands">
+    Define custom commands for your agent
+  </Card>
+</CardGroup>
+
+## Example Implementation
+
+For a complete working example of a custom agent using the Service API, see the [Talon](https://github.com/HavocFramework/Talon) reference implementation.

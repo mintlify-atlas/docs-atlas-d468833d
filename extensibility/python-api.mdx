@@ -1,0 +1,806 @@
+---
+title: Python API (havoc-py)
+description: Complete reference for the Havoc Python API
+---
+
+The `havoc-py` library provides a Python interface to Havoc's Service API, enabling custom agent development, automation, and extensibility.
+
+## Installation
+
+```bash
+git clone https://github.com/HavocFramework/havoc-py
+cd havoc-py
+pip install .
+```
+
+<Note>
+  The havoc-py library requires Python 3.8 or higher.
+</Note>
+
+## Core Classes
+
+### HavocService
+
+Manages the WebSocket connection to the Teamserver Service API.
+
+#### Constructor
+
+```python
+from havoc.service import HavocService
+
+havoc = HavocService(
+    endpoint="ws://0.0.0.0:40056/service-endpoint",
+    password="service-password"
+)
+```
+
+<ParamField path="endpoint" type="string" required>
+  WebSocket URL to the Teamserver Service endpoint
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  Service password (defined in Teamserver profile)
+</ParamField>
+
+#### Methods
+
+<ResponseField name="register_agent" type="method">
+  Register a custom agent type with the Teamserver.
+
+  ```python
+  havoc.register_agent(agent: AgentType) -> None
+  ```
+
+  **Parameters:**
+  - `agent` (AgentType): Agent instance to register
+
+  **Example:**
+  ```python
+  from havoc.agent import AgentType
+  
+  agent = MyCustomAgent()
+  havoc.register_agent(agent)
+  ```
+</ResponseField>
+
+<ResponseField name="register_externalc2" type="method">
+  Register an External C2 listener.
+
+  ```python
+  await havoc.register_externalc2(
+      name: str,
+      endpoint: str
+  ) -> dict
+  ```
+
+  **Parameters:**
+  - `name` (str): Display name for the External C2
+  - `endpoint` (str): HTTP endpoint path for agent traffic
+
+  **Returns:** Registration response dictionary
+
+  **Example:**
+  ```python
+  response = await havoc.register_externalc2(
+      name="DNS-C2",
+      endpoint="dns-transport"
+  )
+  ```
+</ResponseField>
+
+### AgentType
+
+Base class for defining custom agent types.
+
+#### Class Attributes
+
+```python
+from havoc.agent import AgentType
+
+class MyAgent(AgentType):
+    Name = "MyAgent"                 # Agent name displayed in UI
+    Author = "@YourHandle"           # Attribution
+    Version = "1.0"                  # Version string
+    Description = "Custom agent"     # Brief description
+    MagicValue = 0xDEADBEEF         # Unique identifier (hex)
+    
+    Formats = [                      # Supported output formats
+        {
+            "Name": "Executable",
+            "Extension": "exe"
+        }
+    ]
+    
+    SupportedOS = [                  # Operating systems
+        "Windows",
+        "Linux",
+        "MacOS"
+    ]
+    
+    BuildingConfig = {               # Build options (shown in UI)
+        "Sleep": "5",
+        "Jitter": "10",
+        "Host": "0.0.0.0",
+        "Port": "443"
+    }
+    
+    Commands = []                    # List of Command instances
+```
+
+<ParamField path="Name" type="string" required>
+  Agent name displayed in the Havoc UI
+</ParamField>
+
+<ParamField path="Author" type="string" required>
+  Author attribution (e.g., "@username")
+</ParamField>
+
+<ParamField path="Version" type="string" required>
+  Version string (e.g., "1.0.0")
+</ParamField>
+
+<ParamField path="Description" type="string" required>
+  Brief description of the agent's purpose
+</ParamField>
+
+<ParamField path="MagicValue" type="integer" required>
+  Unique identifier for the agent type (hexadecimal)
+</ParamField>
+
+<ParamField path="Formats" type="list" required>
+  List of supported payload formats
+
+  ```python
+  [
+      {"Name": "Executable", "Extension": "exe"},
+      {"Name": "Shellcode", "Extension": "bin"}
+  ]
+  ```
+</ParamField>
+
+<ParamField path="SupportedOS" type="list" required>
+  List of supported operating systems: `"Windows"`, `"Linux"`, `"MacOS"`
+</ParamField>
+
+<ParamField path="BuildingConfig" type="dict" required>
+  Configuration options displayed in the payload generation UI
+
+  ```python
+  {
+      "Sleep": "5",
+      "Jitter": "10",
+      "CustomOption": "value"
+  }
+  ```
+</ParamField>
+
+<ParamField path="Commands" type="list" required>
+  List of Command instances defining available commands
+</ParamField>
+
+#### Methods
+
+<ResponseField name="generate" type="method">
+  Generate the agent payload.
+
+  ```python
+  def generate(self, config: dict) -> str:
+      """
+      Args:
+          config: BuildingConfig values from UI
+      
+      Returns:
+          Generated payload as string or bytes
+      """
+      pass
+  ```
+
+  **Example:**
+  ```python
+  def generate(self, config: dict) -> str:
+      with open('agent_template.py', 'r') as f:
+          template = f.read()
+      
+      # Replace placeholders
+      payload = template.replace('{{SLEEP}}', config['Sleep'])
+      payload = payload.replace('{{HOST}}', config['Host'])
+      
+      return payload
+  ```
+</ResponseField>
+
+### Command
+
+Defines a custom command for your agent.
+
+#### Class Attributes
+
+```python
+from havoc.agent import Command, CommandParam
+from havoc.packer import Packer
+
+class CommandShell(Command):
+    CommandId = 0x100                      # Unique command ID
+    Name = "shell"                         # Command name
+    Description = "Execute shell command"  # Brief description
+    Help = "shell <command>"               # Usage help text
+    NeedAdmin = False                      # Requires admin privileges
+    Mitr = ["T1059", "T1059.001"]         # MITRE ATT&CK techniques
+    
+    Params = [                             # Command parameters
+        CommandParam(
+            name="command",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        packer = Packer()
+        packer.add_int(self.CommandId)
+        packer.add_data(arguments['command'])
+        return packer.buffer
+```
+
+<ParamField path="CommandId" type="integer" required>
+  Unique identifier for the command (e.g., `0x100`)
+</ParamField>
+
+<ParamField path="Name" type="string" required>
+  Command name as typed in the console
+</ParamField>
+
+<ParamField path="Description" type="string" required>
+  Brief description shown in help text
+</ParamField>
+
+<ParamField path="Help" type="string" required>
+  Detailed usage information
+</ParamField>
+
+<ParamField path="NeedAdmin" type="boolean" required>
+  Whether command requires administrator/root privileges
+</ParamField>
+
+<ParamField path="Mitr" type="list" required>
+  List of MITRE ATT&CK technique IDs (e.g., `["T1059"]`)
+</ParamField>
+
+<ParamField path="Params" type="list" required>
+  List of CommandParam instances defining parameters
+</ParamField>
+
+#### Methods
+
+<ResponseField name="job_generate" type="method">
+  Generate the binary command payload.
+
+  ```python
+  def job_generate(self, arguments: dict) -> bytes:
+      """
+      Args:
+          arguments: Dictionary with parameter values
+      
+      Returns:
+          Packed binary command data
+      """
+      pass
+  ```
+
+  **Example:**
+  ```python
+  def job_generate(self, arguments: dict) -> bytes:
+      packer = Packer()
+      
+      # Pack command ID
+      packer.add_int(self.CommandId)
+      
+      # Pack parameters
+      packer.add_data(arguments['command'])
+      
+      return packer.buffer
+  ```
+</ResponseField>
+
+### CommandParam
+
+Defines a command parameter.
+
+#### Constructor
+
+```python
+from havoc.agent import CommandParam
+
+# String parameter
+param = CommandParam(
+    name="message",
+    is_file_path=False,
+    is_optional=False
+)
+
+# File path parameter (shows file picker in UI)
+param = CommandParam(
+    name="local_file",
+    is_file_path=True,
+    is_optional=False
+)
+
+# Optional parameter
+param = CommandParam(
+    name="timeout",
+    is_file_path=False,
+    is_optional=True
+)
+```
+
+<ParamField path="name" type="string" required>
+  Parameter name (referenced in `arguments` dict)
+</ParamField>
+
+<ParamField path="is_file_path" type="boolean" required>
+  If `True`, UI shows file picker. If `False`, shows text input.
+</ParamField>
+
+<ParamField path="is_optional" type="boolean" required>
+  Whether parameter is optional
+</ParamField>
+
+### Packer
+
+Utility class for building binary command payloads.
+
+#### Methods
+
+<ResponseField name="add_int" type="method">
+  Add a 32-bit integer (little-endian).
+
+  ```python
+  packer.add_int(value: int) -> None
+  ```
+
+  **Example:**
+  ```python
+  packer.add_int(0x100)  # Command ID
+  packer.add_int(42)     # Numeric value
+  ```
+</ResponseField>
+
+<ResponseField name="add_data" type="method">
+  Add a null-terminated string.
+
+  ```python
+  packer.add_data(data: str) -> None
+  ```
+
+  **Example:**
+  ```python
+  packer.add_data("whoami")
+  packer.add_data("/etc/passwd")
+  ```
+</ResponseField>
+
+<ResponseField name="add_bytes" type="method">
+  Add raw bytes.
+
+  ```python
+  packer.add_bytes(data: bytes) -> None
+  ```
+
+  **Example:**
+  ```python
+  packer.add_bytes(b"\x00\x01\x02\x03")
+  packer.add_bytes(file_contents)
+  ```
+</ResponseField>
+
+<ResponseField name="buffer" type="property">
+  Get the packed binary data.
+
+  ```python
+  command_bytes = packer.buffer
+  ```
+
+  **Returns:** `bytes` object with packed data
+</ResponseField>
+
+## Complete Examples
+
+### Basic Shell Command
+
+```python shell_command.py
+from havoc.agent import Command, CommandParam
+from havoc.packer import Packer
+
+COMMAND_SHELL = 0x100
+
+class CommandShell(Command):
+    CommandId = COMMAND_SHELL
+    Name = "shell"
+    Description = "Execute shell commands using /bin/sh"
+    Help = """
+    Usage: shell <command>
+    
+    Executes the specified command using the system shell.
+    
+    Examples:
+        shell whoami
+        shell cat /etc/passwd
+        shell ls -la /tmp
+    """
+    NeedAdmin = False
+    Mitr = ["T1059", "T1059.004"]  # Command and Scripting Interpreter: Unix Shell
+    
+    Params = [
+        CommandParam(
+            name="command",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        packer = Packer()
+        packer.add_int(self.CommandId)
+        packer.add_data(arguments['command'])
+        return packer.buffer
+```
+
+### File Upload Command
+
+```python upload_command.py
+from havoc.agent import Command, CommandParam
+from havoc.packer import Packer
+import os
+
+COMMAND_UPLOAD = 0x101
+
+class CommandUpload(Command):
+    CommandId = COMMAND_UPLOAD
+    Name = "upload"
+    Description = "Upload file to target"
+    Help = """
+    Usage: upload <local_file> <remote_path>
+    
+    Uploads a file from the operator's system to the target.
+    
+    Examples:
+        upload /tmp/tool.sh /tmp/tool.sh
+        upload implant.elf /var/tmp/.hidden
+    """
+    NeedAdmin = False
+    Mitr = ["T1105"]  # Ingress Tool Transfer
+    
+    Params = [
+        CommandParam(
+            name="local_file",
+            is_file_path=True,
+            is_optional=False
+        ),
+        CommandParam(
+            name="remote_path",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+    
+    def job_generate(self, arguments: dict) -> bytes:
+        packer = Packer()
+        
+        # Command ID
+        packer.add_int(self.CommandId)
+        
+        # Remote path
+        packer.add_data(arguments['remote_path'])
+        
+        # Read file
+        with open(arguments['local_file'], 'rb') as f:
+            file_data = f.read()
+        
+        # File size
+        packer.add_int(len(file_data))
+        
+        # File contents
+        packer.add_bytes(file_data)
+        
+        return packer.buffer
+```
+
+### Complete Agent Example
+
+<CodeGroup>
+```python agent.py
+from havoc.agent import AgentType
+from commands import CommandShell, CommandPwd, CommandUpload, CommandDownload
+
+class TalonAgent(AgentType):
+    Name = "Talon"
+    Author = "@HavocFramework"
+    Version = "0.1.0"
+    Description = "Python-based cross-platform agent"
+    MagicValue = 0x5041594C
+    
+    Formats = [
+        {
+            "Name": "Python Script",
+            "Extension": "py"
+        },
+        {
+            "Name": "PyInstaller Executable",
+            "Extension": "exe"
+        }
+    ]
+    
+    SupportedOS = [
+        "Linux",
+        "MacOS",
+        "Windows"
+    ]
+    
+    BuildingConfig = {
+        "Sleep": "5",
+        "Jitter": "20",
+        "Host": "0.0.0.0",
+        "Port": "443",
+        "UserAgent": "Mozilla/5.0",
+        "Secure": "true"
+    }
+    
+    Commands = [
+        CommandShell(),
+        CommandPwd(),
+        CommandUpload(),
+        CommandDownload()
+    ]
+    
+    def generate(self, config: dict) -> str:
+        # Load template
+        with open('templates/agent.py.template', 'r') as f:
+            template = f.read()
+        
+        # Replace placeholders
+        replacements = {
+            '{{SLEEP}}': config['Sleep'],
+            '{{JITTER}}': config['Jitter'],
+            '{{HOST}}': config['Host'],
+            '{{PORT}}': config['Port'],
+            '{{USER_AGENT}}': config['UserAgent'],
+            '{{SECURE}}': config['Secure']
+        }
+        
+        payload = template
+        for key, value in replacements.items():
+            payload = payload.replace(key, value)
+        
+        return payload
+```
+
+```python main.py
+from havoc.service import HavocService
+from agent import TalonAgent
+import signal
+import sys
+
+def signal_handler(sig, frame):
+    print('\n[!] Shutting down...')
+    sys.exit(0)
+
+def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Create agent
+    agent = TalonAgent()
+    
+    # Connect to Teamserver
+    print(f"[*] Connecting to Teamserver...")
+    havoc = HavocService(
+        endpoint="ws://0.0.0.0:40056/service-endpoint",
+        password="service-password"
+    )
+    
+    # Register agent
+    print(f"[+] Registering agent: {agent.Name}")
+    havoc.register_agent(agent)
+    
+    print(f"[+] Agent registered successfully")
+    print(f"[*] Commands available: {len(agent.Commands)}")
+    for cmd in agent.Commands:
+        print(f"    - {cmd.Name}: {cmd.Description}")
+    
+    print(f"[*] Agent ready. Press Ctrl+C to exit.")
+    
+    # Keep alive
+    signal.pause()
+
+if __name__ == "__main__":
+    main()
+```
+</CodeGroup>
+
+## Service API Protocol
+
+### Authentication
+
+```python
+import json
+import hashlib
+
+def authenticate(websocket, password):
+    # Hash password with SHA3-256
+    hasher = hashlib.sha3_256()
+    hasher.update(password.encode())
+    hashed = hasher.hexdigest()
+    
+    # Send auth message
+    auth_msg = {
+        "Head": {"Type": "Register"},
+        "Body": {"Password": password}
+    }
+    websocket.send(json.dumps(auth_msg))
+    
+    # Receive response
+    response = json.loads(websocket.recv())
+    return response["Body"]["Success"]
+```
+
+### Message Types
+
+<Tabs>
+  <Tab title="RegisterAgent">
+    ```python
+    message = {
+        "Head": {
+            "Type": "RegisterAgent"
+        },
+        "Body": {
+            "Agent": {
+                "Name": "MyAgent",
+                "Author": "@me",
+                "Version": "1.0",
+                "MagicValue": "deadbeef",
+                # ... other agent properties
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="AgentRegister">
+    ```python
+    message = {
+        "Head": {"Type": "Agent"},
+        "Body": {
+            "Type": "AgentRegister",
+            "AgentHeader": {
+                "Size": "1024",
+                "MagicValue": "deadbeef",
+                "AgentID": "12345678"
+            },
+            "RegisterInfo": {
+                "Hostname": "target-host",
+                "Username": "user",
+                "DomainName": "WORKGROUP",
+                "InternalIP": "192.168.1.100",
+                "Process Name": "python3",
+                "Process ID": "1234",
+                "OS Version": "Linux 5.15",
+                "OS Arch": "x64"
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="AgentTask">
+    ```python
+    # Request tasks
+    message = {
+        "Head": {"Type": "Agent"},
+        "Body": {
+            "Type": "AgentTask",
+            "Agent": {"NameID": "agent-12345"},
+            "Task": "Get"
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="AgentOutput">
+    ```python
+    import base64
+    
+    message = {
+        "Head": {"Type": "Agent"},
+        "Body": {
+            "Type": "AgentOutput",
+            "AgentID": "agent-12345",
+            "Callback": {
+                "Type": "Output",
+                "Message": "Command output here"
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Command IDs">
+    - Use unique command IDs starting from `0x100`
+    - Reserve `0x00-0xFF` for system commands
+    - Document your ID allocation scheme
+    - Avoid ID conflicts between commands
+  </Accordion>
+
+  <Accordion title="Parameter Validation">
+    ```python
+    def job_generate(self, arguments: dict) -> bytes:
+        # Validate required parameters
+        if 'command' not in arguments:
+            raise ValueError("Missing required parameter: command")
+        
+        # Validate parameter types
+        if not isinstance(arguments['command'], str):
+            raise TypeError("Parameter 'command' must be string")
+        
+        # Sanitize inputs
+        command = arguments['command'].strip()
+        if not command:
+            raise ValueError("Parameter 'command' cannot be empty")
+        
+        # Generate command
+        packer = Packer()
+        packer.add_int(self.CommandId)
+        packer.add_data(command)
+        return packer.buffer
+    ```
+  </Accordion>
+
+  <Accordion title="Error Handling">
+    ```python
+    def generate(self, config: dict) -> str:
+        try:
+            # Attempt payload generation
+            payload = self._build_payload(config)
+            return payload
+        except FileNotFoundError as e:
+            raise RuntimeError(f"Template not found: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Payload generation failed: {e}")
+    ```
+  </Accordion>
+
+  <Accordion title="Logging">
+    ```python
+    import logging
+    
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    class MyAgent(AgentType):
+        def generate(self, config: dict) -> str:
+            logger.info(f"Generating payload with config: {config}")
+            # ...
+            logger.info("Payload generated successfully")
+            return payload
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="havoc-py Repository" icon="github" href="https://github.com/HavocFramework/havoc-py">
+    Official Python API source code
+  </Card>
+  <Card title="Talon Example" icon="github" href="https://github.com/HavocFramework/Talon">
+    Reference implementation using havoc-py
+  </Card>
+  <Card title="Custom Agents Guide" href="/extensibility/custom-agents">
+    Step-by-step agent development
+  </Card>
+  <Card title="External C2 Guide" href="/extensibility/external-c2">
+    Using havoc-py for External C2
+  </Card>
+</CardGroup>

@@ -1,0 +1,228 @@
+---
+title: 'Contributing'
+description: 'Guide to contributing to Havoc Framework'
+---
+
+## How to Contribute
+
+Thank you for your interest in contributing to Havoc Framework! This guide will help you get started with contributing to the project.
+
+## Contribution Workflow
+
+### Pushing Changes to the Repository
+
+<Note>
+  It is preferred that new changes are pushed to a new branch, and then a pull request is made to merge that new branch back into Main/Master.
+</Note>
+
+### Step-by-Step Process
+
+**1. Create a New Local Branch**
+
+Create a new branch for your changes:
+
+```bash
+git switch -c <new_branch_name>
+```
+
+Use a descriptive branch name that reflects the changes you're making, for example:
+- `feature/add-new-command`
+- `bugfix/fix-sleep-obfuscation`
+- `docs/update-readme`
+
+**2. Confirm the New Branch Was Created**
+
+Verify your branch was created and you're currently on it:
+
+```bash
+git branch -a
+```
+
+You should see your new branch marked with an asterisk (*) indicating it's the current branch.
+
+**3. Make Your Changes**
+
+Make the desired changes to the codebase:
+- Write clean, readable code
+- Follow the existing code style and conventions
+- Add comments where necessary
+- Test your changes thoroughly
+
+**4. Commit Your Changes**
+
+Stage and commit your changes:
+
+```bash
+git add .
+git commit -m "Description of your changes"
+```
+
+Write clear, descriptive commit messages that explain what changed and why.
+
+**5. Set Upstream and Push**
+
+Set the upstream branch and push your changes:
+
+```bash
+git push --set-upstream origin <new_branch_name>
+```
+
+For subsequent pushes to the same branch, you can simply use:
+
+```bash
+git push
+```
+
+**6. Create a Pull Request**
+
+Once your changes are pushed:
+1. Navigate to the [Havoc GitHub repository](https://github.com/HavocFramework/Havoc)
+2. Click on "Pull requests"
+3. Click "New pull request"
+4. Select your branch as the compare branch
+5. Fill in the pull request template with:
+   - A clear title
+   - Description of changes
+   - Any related issues
+   - Testing performed
+6. Submit the pull request
+
+## Contribution Guidelines
+
+### Code Quality
+
+- **Follow existing patterns**: Review the codebase to understand the current architecture and coding style
+- **Write clean code**: Use meaningful variable names, add comments for complex logic
+- **Test thoroughly**: Ensure your changes work as expected and don't break existing functionality
+- **Keep changes focused**: Each pull request should address a single issue or feature
+
+### Testing
+
+Before submitting a pull request:
+
+1. **Build the project** to ensure no compilation errors:
+   ```bash
+   # Test client build
+   make client-build
+   
+   # Test teamserver build
+   make ts-build
+   ```
+
+2. **Test your changes** in a development environment
+3. **Verify compatibility** across supported platforms if possible
+
+### Documentation
+
+If your changes affect user-facing features:
+
+- Update relevant documentation
+- Add comments to complex code sections
+- Update the Wiki if necessary
+- Include usage examples for new features
+
+## Areas for Contribution
+
+### Code Contributions
+
+- **Bug fixes**: Fix existing issues listed on GitHub
+- **New features**: Add new capabilities to the framework
+- **Performance improvements**: Optimize existing code
+- **Platform support**: Improve compatibility across different systems
+
+### Non-Code Contributions
+
+- **Documentation**: Improve or expand documentation
+- **Bug reports**: Report issues with detailed reproduction steps
+- **Testing**: Test the framework and report findings
+- **Community support**: Help others in Discord or GitHub discussions
+
+## Component-Specific Guidelines
+
+### Client (C++/Qt)
+
+The Havoc Client is located at `/client` and is written in C++ using the Qt framework.
+
+- Follow Qt best practices
+- Maintain cross-platform compatibility (Windows, Linux, macOS)
+- Test UI changes on different screen resolutions
+- Ensure dark theme consistency (Dracula theme)
+
+### Teamserver (Golang)
+
+The Teamserver is located at `/teamserver` and is written in Go.
+
+- Follow Go conventions and best practices
+- Use `go fmt` to format code
+- Add error handling appropriately
+- Test with `--debug` flag enabled
+
+### Demon Agent (C/ASM)
+
+The Demon agent is located at `/payloads/Demon`.
+
+<Warning>
+  Changes to the Demon agent require careful testing and OPSEC considerations. Thoroughly test any modifications.
+</Warning>
+
+- Maintain low-level code quality
+- Be mindful of payload size
+- Consider OPSEC implications of changes
+- Test both x86 and x64 architectures when applicable
+
+### Modules (Python)
+
+Modules are located in the [Havoc Modules repository](https://github.com/HavocFramework/Modules).
+
+- Follow the [Module Template](https://github.com/HavocFramework/Modules/tree/main/Template)
+- Use the [Python API](https://github.com/HavocFramework/havoc-py)
+- Document module usage clearly
+- Include error handling
+
+## Communication
+
+### Getting Help
+
+- **Discord**: Join the [Havoc Discord](https://discord.gg/z3PF3NRDE5) for discussions
+- **GitHub Issues**: Use for bug reports and feature requests
+- **Pull Requests**: Use for code review discussions
+
+### Reporting Issues
+
+When reporting issues:
+
+1. **Search existing issues** first to avoid duplicates
+2. **Use a clear title** that describes the issue
+3. **Provide details**:
+   - Operating system and version
+   - Steps to reproduce
+   - Expected vs actual behavior
+   - Error messages or logs
+   - Screenshots if applicable
+
+<Note>
+  Please do not open any issues regarding detection. Havoc is designed to be malleable and modular, not specifically evasive.
+</Note>
+
+### Feature Requests
+
+When requesting features:
+
+- Explain the use case clearly
+- Describe the expected behavior
+- Consider if it could be implemented as a module
+- Be open to discussion about implementation approaches
+
+## Recognition
+
+Contributors who help improve Havoc are recognized in the [CREDITS.md](/resources/credits) file. Significant contributions may be highlighted in release notes.
+
+## Resources
+
+- **Main Repository**: [github.com/HavocFramework/Havoc](https://github.com/HavocFramework/Havoc)
+- **Python API**: [github.com/HavocFramework/havoc-py](https://github.com/HavocFramework/havoc-py)
+- **Modules**: [github.com/HavocFramework/Modules](https://github.com/HavocFramework/Modules)
+- **Wiki**: [GitHub Wiki](https://github.com/HavocFramework/Havoc/wiki)
+- **Discord**: [Havoc Discord Server](https://discord.gg/z3PF3NRDE5)
+
+Thank you for contributing to Havoc Framework!

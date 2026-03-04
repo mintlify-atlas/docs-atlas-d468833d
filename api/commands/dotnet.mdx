@@ -1,0 +1,292 @@
+---
+title: dotnet
+description: Execute and manage .NET assemblies within the Demon agent
+---
+
+## Overview
+
+The `dotnet` command provides capabilities for executing .NET assemblies directly within the Demon process. It bootstraps the Common Language Runtime (CLR) and provides in-memory execution of managed code.
+
+<Warning>
+  Calling `inline-execute` creates an instance of the CLR within the Demon's process. This is an irreversible procedure and may provide additional indicators of compromise to defenders.
+</Warning>
+
+## Syntax
+
+```bash
+dotnet [subcommand] [parameters]
+```
+
+## Subcommands
+
+### list-versions
+
+Enumerate all installed .NET Framework versions on the target system.
+
+```bash
+dotnet list-versions
+```
+
+<ResponseField name="versions" type="array">
+  List of installed .NET Framework versions
+  
+  <ResponseField name="version" type="string">
+    .NET version identifier (e.g., v4.0.30319, v2.0.50727)
+  </ResponseField>
+  
+  <ResponseField name="path" type="string">
+    Installation path for the runtime
+  </ResponseField>
+</ResponseField>
+
+### inline-execute
+
+Execute a .NET assembly in-memory within the current Demon process.
+
+```bash
+dotnet inline-execute [path-to-assembly] [arguments]
+```
+
+<ParamField path="path-to-assembly" type="string" required>
+  Local path to the .NET assembly (DLL or EXE) to execute
+</ParamField>
+
+<ParamField path="arguments" type="string" optional>
+  Command-line arguments to pass to the assembly's entry point
+</ParamField>
+
+## How It Works
+
+The `inline-execute` command follows this execution flow:
+
+1. **CLR Bootstrap**: Creates an instance of the CLR (v4.0.30319 by default) within the Demon process
+2. **AMSI Bypass**: Loads `amsi.dll` and patches it in-memory to bypass AMSI scanning
+3. **AppDomain Creation**: Creates an AppDomain named "DefaultDomain"
+4. **Assembly Load**: Loads the assembly into memory from the uploaded bytes
+5. **Entry Point Discovery**: Finds the assembly's entry point method
+6. **Execution**: Invokes the entry point with supplied arguments
+7. **Output Capture**: Captures console output and returns it to the teamserver
+
+## Return Values
+
+<ResponseField name="status" type="string">
+  Execution status:
+  - `DOTNET_INFO_PATCHED` (0x1) - AMSI successfully patched
+  - `DOTNET_INFO_NET_VERSION` (0x2) - CLR version information
+  - `DOTNET_INFO_ENTRYPOINT` (0x3) - Entry point found and executing
+  - `DOTNET_INFO_FINISHED` (0x4) - Execution completed
+  - `DOTNET_INFO_FAILED` (0x5) - Execution failed
+</ResponseField>
+
+<ResponseField name="output" type="string">
+  Captured console output from the assembly execution
+</ResponseField>
+
+## Examples
+
+### List Installed .NET Versions
+
+```bash
+dotnet list-versions
+```
+
+**Example Output:**
+```
+Installed .NET Framework Versions:
+  - v4.0.30319 (C:\Windows\Microsoft.NET\Framework64\v4.0.30319)
+  - v2.0.50727 (C:\Windows\Microsoft.NET\Framework64\v2.0.50727)
+```
+
+### Execute Seatbelt
+
+```bash
+dotnet inline-execute /path/to/Seatbelt.exe "-group=all"
+```
+
+### Execute Rubeus
+
+```bash
+# Dump Kerberos tickets
+dotnet inline-execute /path/to/Rubeus.exe "dump /nowrap"
+
+# Request TGT
+dotnet inline-execute /path/to/Rubeus.exe "asktgt /user:admin /rc4:hash /nowrap"
+```
+
+### Execute SharpHound
+
+```bash
+dotnet inline-execute /path/to/SharpHound.exe "-c All -d corp.local"
+```
+
+### Execute Custom .NET Tool
+
+```bash
+dotnet inline-execute /path/to/CustomTool.exe "--verbose --output C:\\Temp"
+```
+
+### Execute Without Arguments
+
+```bash
+dotnet inline-execute /path/to/Assembly.exe
+```
+
+## OPSEC Considerations
+
+<Warning>
+  In-process .NET execution creates numerous indicators that may be detected by EDR solutions.
+</Warning>
+
+### Indicators of Compromise
+
+1. **CLR Loading**: CLR loaded into unexpected process (e.g., explorer.exe)
+2. **AMSI Patching**: In-memory modification of amsi.dll
+3. **AppDomain Creation**: New AppDomain created in non-.NET process
+4. **Assembly Load Events**: ETW events for assembly loading
+5. **JIT Compilation**: Memory regions with JIT-compiled code
+
+### Detection Vectors
+
+- **CLR in Unusual Processes**: Beacon processes shouldn't normally host the CLR
+- **AMSI Patch Signatures**: Memory scanning for known AMSI bypass patterns
+- **ETW Telemetry**: Microsoft-Windows-DotNETRuntime provider events
+- **Image Load Events**: clr.dll, clrjit.dll loading into unexpected processes
+
+### Mitigation Strategies
+
+<Tabs>
+  <Tab title="Fork & Run">
+    Use external modules like `InvokeAssembly` that execute in sacrificial processes:
+    
+    ```bash
+    # Executes in separate process (better OPSEC)
+    # Requires InvokeAssembly module
+    invoke-assembly /path/to/Seatbelt.exe "-group=all"
+    ```
+    
+    **Advantages:**
+    - CLR loaded in sacrificial process
+    - Beacon process remains clean
+    - Process can be killed after execution
+  </Tab>
+  
+  <Tab title="In-Process (Current)">
+    Execute within the Demon process:
+    
+    ```bash
+    # Executes in current process (faster but more risky)
+    dotnet inline-execute /path/to/tool.exe
+    ```
+    
+    **Advantages:**
+    - Faster execution
+    - No process creation events
+    - Inherits current token context
+  </Tab>
+</Tabs>
+
+### Best Practices
+
+1. **Use Sparingly**: Only execute .NET assemblies when necessary
+2. **Short-Lived Sessions**: Consider using a separate agent for .NET execution
+3. **Clean Processes**: Execute in sacrificial processes when possible (use modules)
+4. **Monitor Detection**: Be aware that CLR loading may trigger alerts
+5. **Test First**: Validate assemblies in lab environments
+
+## Permanent Impact
+
+<Warning>
+  Once the CLR is loaded into the Demon process, it CANNOT be unloaded. This is a permanent modification to the process.
+</Warning>
+
+### Implications
+
+- CLR remains loaded for the lifetime of the Demon process
+- Subsequent `dotnet inline-execute` calls reuse the existing CLR instance
+- AppDomains are reused across executions
+- Memory footprint increases and persists
+- Process may behave differently under analysis
+
+### When to Use
+
+**Good Use Cases:**
+- Executing multiple .NET tools in succession
+- When speed is critical
+- In compromised environments with weak detection
+- When you don't care about CLR indicators
+
+**Avoid When:**
+- Operating in heavily monitored environments
+- Maintaining long-term access
+- Executing a single .NET tool (use fork & run instead)
+- Advanced EDR is present
+
+## Assembly Requirements
+
+### Compatible Assemblies
+
+- .NET Framework assemblies (not .NET Core/.NET 5+)
+- Assemblies targeting v4.0.30319 or earlier
+- Executables (EXE) with entry point methods
+- Class libraries (DLL) with defined entry points
+
+### Unsupported
+
+- .NET Core / .NET 5+ assemblies
+- Assemblies with unmanaged dependencies
+- Assemblies requiring specific CLR versions outside v4.0.30319
+
+## Output Capture
+
+Console output from the assembly is automatically captured and returned:
+
+- `Console.WriteLine()` output is captured
+- Error streams are captured
+- Output is returned via named pipe to teamserver
+- Large outputs are handled in chunks
+
+## CLR Configuration
+
+The CLR is initialized with:
+
+- **Version**: v4.0.30319 (hardcoded)
+- **AppDomain**: "DefaultDomain"
+- **Pipe Name**: Generated using template from teamserver config
+
+These values are currently not configurable at runtime.
+
+## Related Commands
+
+- `inline-execute` - Execute BOF/COFF files (different from .NET)
+- External modules:
+  - `InvokeAssembly` - Execute .NET in sacrificial process
+  - `Powerpick` - Execute PowerShell (also loads CLR)
+
+## Troubleshooting
+
+### Assembly Failed to Load
+
+- Verify assembly is .NET Framework (not Core)
+- Check assembly is not corrupted
+- Ensure assembly targets compatible framework version
+
+### No Output Returned
+
+- Assembly may not write to console
+- Check assembly executed successfully (look for DOTNET_INFO_FINISHED)
+- Verify pipe communication is working
+
+### Execution Hangs
+
+- Assembly may be waiting for user input
+- Long-running operations may appear as hangs
+- Check `job list` for active jobs
+
+## Notes
+
+- Assembly files are chunked for upload (max 30MB per chunk)
+- AMSI bypass is applied automatically before execution
+- Assembly execution is performed in a job thread
+- Arguments are passed as a single string to the Main() method
+- The AppDomain name is "DefaultDomain" by default
+- Multiple assemblies can be executed sequentially in the same CLR instance

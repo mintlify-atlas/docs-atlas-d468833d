@@ -1,0 +1,532 @@
+---
+title: Sleep Obfuscation
+description: Advanced memory encryption techniques during agent sleep periods
+---
+
+## Overview
+
+Sleep obfuscation is a critical evasion technique that encrypts the Demon agent in memory during sleep periods. This prevents memory scanners from detecting malicious code patterns while the agent is idle.
+
+<Warning>
+  **Important**: Sleep obfuscation is automatically disabled when job threads are running. This prevents memory corruption when other threads access the agent's code or data.
+</Warning>
+
+## Why Sleep Obfuscation?
+
+Modern EDR solutions perform periodic memory scans looking for:
+- Known malicious signatures
+- Suspicious memory regions (RWX, unbacked memory)
+- Anomalous code patterns
+- Network indicators in memory
+
+**Sleep obfuscation defeats these scans by:**
+1. Encrypting the agent's memory before sleeping
+2. Changing memory protection to non-executable
+3. Restoring and decrypting after sleep
+4. Making memory appear as random data during scans
+
+## Available Techniques
+
+### WaitForSingleObjectEx (No Obfuscation)
+
+**Value**: `0`
+
+Standard Windows sleep with no memory protection.
+
+```yaml
+Demon:
+  Implant:
+    SleepMaskTechnique: 0
+```
+
+**How it works:**
+```c
+WaitForSingleObjectEx(
+    NtCurrentProcess(),
+    TimeOut,
+    FALSE
+);
+```
+
+**Characteristics:**
+- ✅ Fastest (no overhead)
+- ✅ Most stable
+- ❌ No memory protection
+- ❌ Detectable by memory scans
+- ❌ Agent fully visible in memory
+
+**When to use:**
+- Testing environments
+- Very short sleep intervals (< 1 second)
+- Environments with no memory scanning
+
+---
+
+### Ekko
+
+**Value**: `1`
+
+Timer-based sleep obfuscation using `RtlCreateTimer`.
+
+```yaml
+Demon:
+  Implant:
+    SleepMaskTechnique: 1
+```
+
+<Accordion title="Technical Details">
+  **Implementation:**
+  
+  1. Create timer queue: `RtlCreateTimerQueue`
+  2. Capture timer thread context
+  3. Build ROP chain for encryption/sleep/decryption
+  4. Queue timers with `RtlCreateTimer` in sequence:
+     - Change memory to RW
+     - Encrypt memory with RC4 (`SystemFunction032`)
+     - Sleep for specified duration
+     - Decrypt memory with RC4
+     - Restore memory protection to RX
+  5. Execute ROP chain via `NtContinue`
+  
+  **ROP Chain:**
+  ```
+  [Event Wait] → [VirtualProtect RW] → [RC4 Encrypt] →
+  [Sleep] → [RC4 Decrypt] → [VirtualProtect RX] → [Set Event]
+  ```
+  
+  **Memory States:**
+  - **Before sleep**: RX (Read + Execute)
+  - **During sleep**: RW (Read + Write), Encrypted
+  - **After sleep**: RX (Read + Execute)
+</Accordion>
+
+**Characteristics:**
+- ✅ Good OPSEC (legitimate Windows API)
+- ✅ Memory encrypted during sleep
+- ✅ ROP-based execution
+- ❌ Incompatible with apps using timers
+- ❌ May conflict with thread pool operations
+
+**OPSEC Considerations:**
+- Uses legitimate `RtlCreateTimer` API
+- ROP chain may be detected by advanced EDR
+- Timer callbacks are normal Windows behavior
+
+---
+
+### Zilean
+
+**Value**: `2`
+
+Wait-based sleep obfuscation using `RtlRegisterWait`.
+
+```yaml
+Demon:
+  Implant:
+    SleepMaskTechnique: 2
+```
+
+<Accordion title="Technical Details">
+  **Implementation:**
+  
+  Similar to Ekko but uses `RtlRegisterWait` instead of `RtlCreateTimer`:
+  
+  1. Create event: `NtCreateEvent`
+  2. Register wait callback: `RtlRegisterWait`
+  3. Build identical ROP chain
+  4. Execute via `NtContinue`
+  
+  **Key Difference:**
+  - Uses wait thread pool instead of timer thread pool
+  - May be more stable in some environments
+  - Different Windows internal execution path
+</Accordion>
+
+**Characteristics:**
+- ✅ Good OPSEC (legitimate Windows API)
+- ✅ Memory encrypted during sleep
+- ✅ Alternative to Ekko
+- ❌ Similar limitations to Ekko
+
+**When to prefer over Ekko:**
+- Target application uses timer APIs
+- Need thread pool diversity
+- Ekko causing stability issues
+
+---
+
+### FOLIAGE
+
+**Value**: `3`
+
+APC-based sleep obfuscation using fiber execution.
+
+```yaml
+Demon:
+  Implant:
+    SleepMaskTechnique: 3
+```
+
+<Accordion title="Technical Details">
+  **Implementation:**
+  
+  Most advanced technique using fibers and APCs:
+  
+  1. **Fiber Setup:**
+     - Convert main thread to fiber: `ConvertThreadToFiberEx`
+     - Create slave fiber: `CreateFiberEx`
+     - Switch to slave fiber: `SwitchToFiber`
+  
+  2. **APC Queue:**
+     - Create suspended thread
+     - Build context chain for encryption
+     - Queue multiple APCs with `NtQueueApcThread`:
+       ```
+       NtWaitForSingleObject →
+       NtProtectVirtualMemory (RW) →
+       SystemFunction032 (Encrypt) →
+       NtGetContextThread →
+       NtSetContextThread (Spoof) →
+       WaitForSingleObjectEx (Sleep) →
+       SystemFunction032 (Decrypt) →
+       NtProtectVirtualMemory (RX) →
+       NtSetContextThread (Restore) →
+       RtlExitUserThread
+       ```
+  
+  3. **Execution:**
+     - Alert and resume thread: `NtAlertResumeThread`
+     - APCs execute in sequence
+     - Thread context spoofed during sleep
+  
+  4. **Cleanup:**
+     - Return to master fiber
+     - Convert back to thread
+</Accordion>
+
+**Characteristics:**
+- ✅ Most advanced technique
+- ✅ Full memory encryption
+- ✅ Context spoofing during sleep
+- ✅ Separate execution thread
+- ❌ More complex (higher chance of detection)
+- ❌ Requires fiber support
+- ❌ Higher CPU overhead
+
+**OPSEC Advantages:**
+- Execution occurs in separate thread
+- Call stack is in system DLL during sleep
+- Memory fully encrypted
+- Context can be spoofed
+
+---
+
+## Configuration Options
+
+### Sleep Mask Enable
+
+Enable or disable sleep obfuscation entirely:
+
+```yaml
+Demon:
+  Implant:
+    SleepMask: 1  # Enable (1) or Disable (0)
+```
+
+<Note>
+  If `SleepMask` is disabled, the technique selection is ignored and standard `WaitForSingleObjectEx` is used.
+</Note>
+
+### Stack Spoofing
+
+Enable stack duplication during sleep (Ekko/Zilean only):
+
+```yaml
+Demon:
+  Config:
+    Implant:
+      StackSpoof: true
+```
+
+**When enabled:**
+1. Gets timer thread context
+2. Queries timer thread's NT_TIB (Thread Information Block)
+3. Duplicates current thread handle
+4. During ROP chain execution:
+   - Saves current thread context
+   - Copies timer thread's NT_TIB to current thread
+   - Sets spoofed context
+   - Sleeps
+   - Restores original context
+
+**Effect**: Makes the sleeping thread's stack look like a legitimate Windows thread pool thread.
+
+### JMP Gadget Bypass
+
+Use JMP gadgets to evade return address validation:
+
+```yaml
+Demon:
+  Config:
+    Implant:
+      SleepJmpBypass: 1  # 0 = None, 1 = JMP RAX, 2 = JMP RBX
+```
+
+**Purpose**: Some EDRs validate ROP chain return addresses. Using JMP gadgets from ntdll bypasses these checks.
+
+**Implementation:**
+```c
+// Search ntdll for gadget
+JmpPad[] = { 0xFF, 0xE0 };  // jmp rax
+JmpGadget = MmGadgetFind(
+    Instance->Modules.Ntdll,
+    LDR_GADGET_MODULE_SIZE,
+    JmpPad,
+    sizeof(JmpPad)
+);
+
+// Use in ROP chain
+Rop[i].Rip = JmpGadget;
+Rop[i].Rax = TargetFunction;
+```
+
+## Encryption Method
+
+All techniques use RC4 encryption via `SystemFunction032`:
+
+```c
+USTRING Key = { .Buffer = RandomBytes, .Length = 16 };
+USTRING Img = { .Buffer = ImageBase, .Length = ImageSize };
+
+// Encrypt
+SystemFunction032(&Img, &Key);
+
+// ... sleep ...
+
+// Decrypt (RC4 is symmetric)
+SystemFunction032(&Img, &Key);
+```
+
+**Key properties:**
+- 16-byte random key generated per sleep
+- Key is stored in ROP context (encrypted with stack)
+- RC4 is fast and built into Windows
+
+## Memory Protection Flow
+
+<Steps>
+  <Step title="Preparation">
+    Agent running normally with RX memory protection.
+  </Step>
+  
+  <Step title="Pre-Sleep">
+    Change memory protection to RW:
+    ```c
+    NtProtectVirtualMemory(
+        NtCurrentProcess(),
+        &ImageBase,
+        &ImageSize,
+        PAGE_READWRITE,
+        &OldProtect
+    );
+    ```
+  </Step>
+  
+  <Step title="Encryption">
+    Encrypt memory with RC4:
+    ```c
+    SystemFunction032(&Img, &Key);
+    ```
+    
+    Memory now contains random-looking encrypted data.
+  </Step>
+  
+  <Step title="Sleep">
+    Agent sleeps. Memory is:
+    - RW (not executable)
+    - Encrypted (appears random)
+    - Not scannable as code
+  </Step>
+  
+  <Step title="Wake Up">
+    Decryption:
+    ```c
+    SystemFunction032(&Img, &Key);
+    ```
+  </Step>
+  
+  <Step title="Restoration">
+    Restore memory protection:
+    ```c
+    NtProtectVirtualMemory(
+        NtCurrentProcess(),
+        &TxtBase,
+        &TxtSize,
+        PAGE_EXECUTE_READ,
+        &OldProtect
+    );
+    ```
+  </Step>
+  
+  <Step title="Resume">
+    Agent continues normal operation.
+  </Step>
+</Steps>
+
+## OPSEC Considerations
+
+### Detection Vectors
+
+<AccordionGroup>
+  <Accordion title="Memory Protection Changes">
+    **Risk**: EDR may monitor `NtProtectVirtualMemory` calls
+    
+    **Mitigation**:
+    - Use indirect syscalls
+    - Encrypt only .text section if possible
+    - Space out protection changes
+  </Accordion>
+  
+  <Accordion title="ROP Chain Execution">
+    **Risk**: Unusual stack patterns or ROP detection
+    
+    **Mitigation**:
+    - Use JMP gadget bypass
+    - Enable stack spoofing
+    - Keep ROP chain in system modules
+  </Accordion>
+  
+  <Accordion title="Suspicious Sleep Patterns">
+    **Risk**: Regular encryption/decryption at intervals
+    
+    **Mitigation**:
+    - Use appropriate jitter
+    - Vary sleep times
+    - Use working hours to appear like scheduled tasks
+  </Accordion>
+  
+  <Accordion title="Timer/Wait Callback Abuse">
+    **Risk**: EDR may flag unusual timer callback behavior
+    
+    **Mitigation**:
+    - Rotate between Ekko and Zilean
+    - Use FOLIAGE for high-security targets
+    - Monitor for timer conflicts
+  </Accordion>
+</AccordionGroup>
+
+### Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Choose Based on Environment" icon="crosshairs">
+    - **Low Security**: WaitForSingleObjectEx (speed)
+    - **Medium Security**: Ekko or Zilean
+    - **High Security**: FOLIAGE with stack spoofing
+  </Card>
+  
+  <Card title="Test Before Operation" icon="flask">
+    - Verify stability in target environment
+    - Check for timer conflicts
+    - Monitor for crashes or hangs
+  </Card>
+  
+  <Card title="Monitor Job Threads" icon="list-check">
+    - Kill unnecessary jobs to enable obfuscation
+    - Use `job list` to check running threads
+    - Balance functionality vs. stealth
+  </Card>
+  
+  <Card title="Adjust Sleep Intervals" icon="clock">
+    - Longer sleep = more encryption overhead
+    - Shorter sleep = more frequent C2
+    - Balance based on operation tempo
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Agent Crashes During Sleep
+
+**Symptoms**: Agent dies after sleep command
+
+**Causes:**
+1. Job threads accessing encrypted memory
+2. Timer conflicts with target application
+3. Incompatible Windows version
+
+**Solutions:**
+```bash
+# Check for running jobs
+job list
+
+# Kill all jobs
+job kill [id]
+
+# Try different technique
+config sleep-technique 2  # Switch to Zilean
+
+# Disable sleep obfuscation temporarily
+config sleep-technique 0
+```
+
+### Sleep Obfuscation Not Working
+
+**Check configuration:**
+```bash
+config  # Verify SleepMaskTechnique is set
+```
+
+**Common issues:**
+- Jobs are running (automatic disable)
+- Sleep interval is 0 (no sleep = no obfuscation)
+- SleepMask option disabled in profile
+
+### Performance Issues
+
+**Symptoms**: Slow response after sleep
+
+**Cause**: Encryption/decryption overhead, especially with FOLIAGE
+
+**Solutions:**
+- Use simpler technique (Ekko/Zilean)
+- Reduce sleep interval
+- Ensure no unnecessary memory is encrypted
+
+## Runtime Configuration
+
+Modify sleep obfuscation at runtime:
+
+```bash
+# Change technique
+config implant sleep-technique 1  # Ekko
+config implant sleep-technique 2  # Zilean
+config implant sleep-technique 3  # FOLIAGE
+
+# Enable/disable stack spoofing
+config implant stackspoof true
+config implant stackspoof false
+
+# Adjust sleep and jitter
+sleep 10 30  # 10 seconds, 30% jitter
+```
+
+<Note>
+  Runtime configuration changes take effect on the next sleep cycle.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Injection Techniques" icon="syringe" href="/demon/injection">
+    Process injection methods and OPSEC
+  </Card>
+  <Card title="Features Overview" icon="star" href="/demon/features">
+    Explore all Demon capabilities
+  </Card>
+  <Card title="Command Reference" icon="book" href="/demon/commands">
+    Master all Demon commands
+  </Card>
+  <Card title="Generate Payloads" icon="hammer" href="/demon/generation">
+    Create configured Demon agents
+  </Card>
+</CardGroup>

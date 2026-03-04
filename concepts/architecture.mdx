@@ -1,0 +1,219 @@
+---
+title: Architecture Overview
+description: Understanding Havoc's three-tier architecture and component communication
+---
+
+# Architecture Overview
+
+Havoc Framework follows a three-tier architecture consisting of the Client, Teamserver, and Demon agents. This design provides flexibility, scalability, and support for multiple operators working simultaneously.
+
+## Three-Tier Architecture
+
+<CardGroup cols={3}>
+  <Card title="Client" icon="desktop">
+    Qt-based GUI for operators to interact with the framework
+  </Card>
+  <Card title="Teamserver" icon="server">
+    Go-based backend managing listeners, agents, and multiplayer sessions
+  </Card>
+  <Card title="Demon Agent" icon="code">
+    C/ASM implant running on compromised systems
+  </Card>
+</CardGroup>
+
+## Component Roles
+
+### Client Layer
+
+The client is a cross-platform GUI application built with C++ and Qt. It provides:
+
+- **User Interface**: Modern dark-themed interface for operators
+- **WebSocket Connection**: Connects to the teamserver over WSS (WebSocket Secure)
+- **Multi-operator Support**: Multiple clients can connect to the same teamserver
+- **Session Management**: Interact with agents, view output, and issue commands
+- **Python API**: Extend functionality with custom scripts
+
+<Note>
+Clients authenticate using credentials defined in the YAOTL profile's `Operators` block.
+</Note>
+
+### Teamserver Layer
+
+The teamserver is the core backend written in Go. Its responsibilities include:
+
+**Agent Management**
+- Registers new agents and maintains session state
+- Dispatches commands from operators to agents
+- Processes responses and relays them to connected clients
+- Persists agent data in SQLite database
+
+**Listener Management**
+- Spawns HTTP/HTTPS listeners for agent callbacks
+- Manages SMB named pipe listeners for pivoting
+- Supports External C2 endpoints
+- Handles listener configuration from profiles
+
+**Client Connection Management**
+- WebSocket server for operator clients
+- Multiplayer session synchronization
+- Authentication and authorization
+- Event broadcasting to all connected clients
+
+**Payload Generation**
+- Compiles Demon agents (EXE, DLL, shellcode)
+- Uses MinGW cross-compilers and NASM
+- Applies profile-based configurations
+
+<Info>
+The teamserver generates self-signed TLS certificates on startup for secure WebSocket connections.
+</Info>
+
+### Demon Agent Layer
+
+Demon is Havoc's flagship agent written in C and x64 assembly. Key features:
+
+**Evasion Techniques**
+```c
+// From Demon.h
+struct {
+    ULONG SleepMaskTechnique;     // Ekko, Zilean, or FOLIAGE
+    ULONG SleepJmpBypass;
+    BOOL  StackSpoof;              // Return address spoofing
+    BOOL  SysIndirect;             // Indirect syscalls
+    BYTE  ProxyLoading;
+    BYTE  AmsiEtwPatch;            // Hardware breakpoint patching
+} Implant;
+```
+
+**Transport Support**
+- HTTP/HTTPS for C2 communication
+- SMB named pipes for peer-to-peer pivoting
+- Encrypted traffic using AES
+
+**Post-Exploitation Capabilities**
+- Token vault and impersonation
+- Process injection and migration
+- .NET assembly execution (in-process)
+- BOF (Beacon Object File) support via CoffeeLdr
+- Kerberos ticket manipulation
+- File system operations
+- Screenshot capture
+
+## Communication Flow
+
+### Client to Teamserver
+
+```
+1. Client connects to Teamserver WebSocket endpoint (wss://host:40056/havoc/)
+2. Client sends authentication package with hashed password
+3. Teamserver validates credentials against YAOTL profile
+4. On success, teamserver sends session state (agents, listeners, events)
+5. Client sends commands; teamserver broadcasts events to all clients
+```
+
+<Tip>
+All client-teamserver communication uses WebSocket over TLS with JSON-encoded packages.
+</Tip>
+
+### Agent to Teamserver
+
+```
+1. Demon agent generates AgentID from system metadata
+2. Agent sends DEMON_INIT request to HTTP/HTTPS listener
+3. Teamserver parses header, validates magic value (0x4156_4F48)
+4. Agent encrypts payload with AES (Key + IV embedded in binary)
+5. Teamserver decrypts, processes commands, queues responses
+6. Agent polls for jobs using COMMAND_GET_JOB
+7. Teamserver responds with queued tasks or COMMAND_NOJOB
+```
+
+**Header Format** (from handlers.go):
+```go
+type Header struct {
+    MagicValue uint32      // 0x4156_4F48 for Demon
+    AgentID    int         // Unique agent identifier
+    Data       parser.Parser  // Encrypted payload
+}
+```
+
+<Note>
+The magic value `0x4156_4F48` spells "HAVOC" in ASCII (little-endian). Custom agents can register their own magic values via the Service API.
+</Note>
+
+### Pivoting Architecture
+
+For SMB pivots, Demon agents can link to create chains:
+
+```
+[Teamserver] <--HTTP--> [Demon A] <--SMB--> [Demon B] <--SMB--> [Demon C]
+```
+
+- Parent agents relay traffic for child agents
+- Teamserver tracks pivot relationships in database
+- Commands are recursively wrapped and encrypted per agent
+
+## Data Storage
+
+The teamserver uses SQLite for persistence:
+
+**Database Schema**
+- `agents`: Agent metadata, configuration, encryption keys
+- `listeners`: Listener configurations
+- `links`: Pivot relationships between agents
+- `misc`: Session state and loot
+
+<Info>
+On restart, the teamserver automatically restores listeners and agents from the database, maintaining continuity across sessions.
+</Info>
+
+## Security Model
+
+**Authentication**
+- Operators authenticate with SHA3-256 hashed passwords
+- Agents use embedded AES keys unique per compiled binary
+
+**Encryption**
+- Client ↔ Teamserver: TLS over WebSocket
+- Agent ↔ Teamserver: AES-256 encrypted payloads
+- Each agent has unique AES key and IV
+
+**Session Isolation**
+- Each agent session is isolated with unique encryption keys
+- Operators can work independently on different agents
+- Event system synchronizes state across all clients
+
+## Extensibility
+
+### Service API (External C2)
+
+The teamserver exposes a Service API for custom agents:
+
+```go
+// From teamserver.go
+if t.Profile.Config.Service != nil {
+    t.Service = service.NewService(t.Server.Engine)
+    t.Service.Teamserver = t
+    t.Service.Start()
+}
+```
+
+Custom agents (like Talon) can register with their own magic values and implement custom protocols.
+
+### Python API
+
+The client embeds Python 3.10 for scripting:
+
+- Register custom event handlers
+- Create UI widgets and dialogs
+- Automate workflows
+- Extend Demon commands
+
+## Summary
+
+Havoc's architecture separates concerns between presentation (Client), business logic (Teamserver), and execution (Demon). This design enables:
+
+- **Scalability**: Multiple operators, agents, and listeners
+- **Flexibility**: Custom agents and protocols via Service API
+- **Persistence**: Database-backed session state
+- **Security**: Layered encryption and authentication
+- **Extensibility**: Python API and modular design

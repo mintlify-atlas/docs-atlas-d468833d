@@ -1,0 +1,413 @@
+---
+title: HTTP/HTTPS Listeners
+description: Complete configuration guide for HTTP and HTTPS listeners in Havoc Framework
+---
+
+HTTP/HTTPS listeners are the primary method for external agent communication with the Havoc teamserver. They provide a flexible, customizable communication channel that can be tailored to blend in with legitimate network traffic.
+
+## Basic Configuration
+
+HTTP listeners are defined in the `Listeners` block of your profile:
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Production HTTPS Listener"
+        Hosts        = ["cdn.example.com"]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        
+        Uris = [
+            "/api/v1/updates",
+            "/api/v1/telemetry"
+        ]
+        
+        Headers = [
+            "Content-Type: application/json",
+            "Accept: application/json"
+        ]
+        
+        Response {
+            Headers = [
+                "Server: nginx/1.18.0",
+                "Content-Type: application/json"
+            ]
+        }
+    }
+}
+```
+
+## Configuration Options
+
+### Required Parameters
+
+<ParamField path="Name" type="string" required>
+  Unique identifier for the listener. This name is displayed in the Havoc client and used to reference the listener.
+</ParamField>
+
+<ParamField path="Hosts" type="array" required>
+  List of callback hosts that agents will connect to. Multiple hosts can be specified for redundancy and rotation.
+  
+  ```hcl
+  Hosts = [
+      "primary.example.com",
+      "backup.example.com",
+      "cdn.example.com"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="HostBind" type="string" required>
+  The network interface address where the listener binds. Use `"0.0.0.0"` to bind to all interfaces, or specify a specific IP address.
+  
+  ```hcl
+  HostBind = "0.0.0.0"  # All interfaces
+  HostBind = "10.0.1.50" # Specific interface
+  ```
+</ParamField>
+
+<ParamField path="PortBind" type="integer" required>
+  The port on which the teamserver listens for incoming agent connections.
+  
+  ```hcl
+  PortBind = 443  # HTTPS
+  PortBind = 80   # HTTP
+  PortBind = 8080 # Custom port
+  ```
+</ParamField>
+
+### Network Configuration
+
+<ParamField path="PortConn" type="integer" default="PortBind value">
+  The port that agents use to connect. This is useful when operating behind a redirector or port forwarding setup where the external port differs from the bind port.
+  
+  ```hcl
+  PortBind = 8443  # Teamserver binds to 8443
+  PortConn = 443   # Agents connect to 443 (redirector forwards to 8443)
+  ```
+</ParamField>
+
+<ParamField path="HostRotation" type="string" default="round-robin">
+  Strategy for rotating through multiple callback hosts. Supported values:
+  - `"round-robin"`: Cycle through hosts sequentially
+  - `"random"`: Randomly select from available hosts
+  
+  ```hcl
+  HostRotation = "round-robin"
+  ```
+</ParamField>
+
+### Security Options
+
+<ParamField path="Secure" type="boolean" default="false">
+  Enable HTTPS/TLS encryption for the listener. When `true`, the teamserver automatically generates self-signed certificates or uses provided certificates.
+  
+  <Warning>
+    Always set `Secure = true` for production operations to encrypt agent communications.
+  </Warning>
+  
+  ```hcl
+  Secure = true
+  ```
+</ParamField>
+
+<ParamField path="Cert" type="block" optional>
+  Custom TLS certificate configuration. If not specified with `Secure = true`, self-signed certificates are automatically generated.
+  
+  ```hcl
+  Cert {
+      Cert = "/path/to/server.crt"
+      Key  = "/path/to/server.key"
+  }
+  ```
+</ParamField>
+
+### Traffic Shaping
+
+<ParamField path="UserAgent" type="string" optional>
+  Custom User-Agent string that agents must use for callbacks. The listener validates this header and rejects requests with mismatched User-Agent values.
+  
+  ```hcl
+  UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+  ```
+</ParamField>
+
+<ParamField path="Uris" type="array" optional>
+  List of valid URI paths for agent callbacks. Requests to other paths are rejected with a fake 404 page.
+  
+  ```hcl
+  Uris = [
+      "/api/v1/check",
+      "/api/v1/submit",
+      "/health"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="Headers" type="array" optional>
+  Custom HTTP headers that agents must include in requests. The listener validates these headers (case-insensitive) and rejects non-matching requests.
+  
+  <Note>
+    Headers `Connection` and `Accept-Encoding` are automatically ignored during validation as they may vary by HTTP client implementation.
+  </Note>
+  
+  ```hcl
+  Headers = [
+      "Content-Type: application/json",
+      "X-API-Key: abc123def456",
+      "Referer: https://legitimate-site.com"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="Method" type="string" default="POST">
+  HTTP method for agent callbacks. Typically `POST` for C2 traffic.
+  
+  ```hcl
+  Method = "POST"
+  ```
+</ParamField>
+
+### Response Configuration
+
+<ParamField path="Response" type="block" optional>
+  Configure custom response headers to blend in with legitimate services.
+  
+  ```hcl
+  Response {
+      Headers = [
+          "Server: Apache/2.4.41 (Ubuntu)",
+          "Content-Type: application/json",
+          "X-Frame-Options: DENY",
+          "X-Content-Type-Options: nosniff"
+      ]
+  }
+  ```
+</ParamField>
+
+### Proxy Support
+
+<ParamField path="Proxy" type="block" optional>
+  Configure agents to use a proxy for callbacks. Useful when agents are deployed in environments with restricted egress.
+  
+  ```hcl
+  Proxy {
+      Host     = "proxy.corp.local"
+      Port     = 8080
+      Username = "domain\\user"  # Optional
+      Password = "password"      # Optional
+  }
+  ```
+</ParamField>
+
+### Operational Security
+
+<ParamField path="KillDate" type="string" optional>
+  Automatically terminate agent operations after the specified date and time. Format: `YYYY-MM-DD HH:MM:SS`
+  
+  ```hcl
+  KillDate = "2024-12-31 23:59:59"
+  ```
+</ParamField>
+
+<ParamField path="WorkingHours" type="string" optional>
+  Restrict agent callbacks to specific hours. Format: `HH:MM-HH:MM` (24-hour format)
+  
+  ```hcl
+  WorkingHours = "08:00-17:00"  # Business hours only
+  ```
+</ParamField>
+
+## Configuration Examples
+
+### Basic HTTP Listener
+
+```hcl
+Listeners {
+    Http {
+        Name     = "Basic HTTP"
+        Hosts    = ["10.0.1.50"]
+        HostBind = "0.0.0.0"
+        PortBind = 80
+        Secure   = false
+    }
+}
+```
+
+### HTTPS Listener with Custom Certificates
+
+```hcl
+Listeners {
+    Http {
+        Name     = "Secure HTTPS"
+        Hosts    = ["secure.example.com"]
+        HostBind = "0.0.0.0"
+        PortBind = 443
+        Secure   = true
+        
+        Cert {
+            Cert = "/etc/ssl/certs/server.crt"
+            Key  = "/etc/ssl/private/server.key"
+        }
+    }
+}
+```
+
+### Microsoft Teams Profile Mimicry
+
+This example mimics Microsoft Teams traffic for evasion:
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Teams Profile"
+        Hosts        = ["teams.example.com"]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+        
+        Uris = [
+            "/Collector/2.0/settings/"
+        ]
+        
+        Headers = [
+            "Accept: json",
+            "Referer: https://teams.microsoft.com/_",
+            "x-ms-session-id: f73c3186-057a-d996-3b63-b6e5de6ef20c",
+            "x-ms-client-type: desktop",
+            "x-mx-client-version: 27/1.0.0.2021020410",
+            "Accept-Encoding: gzip, deflate, br",
+            "Origin: https://teams.microsoft.com"
+        ]
+        
+        Response {
+            Headers = [
+                "Content-Type: application/json; charset=utf-8",
+                "Server: Microsoft-HTTPAPI/2.0",
+                "X-Content-Type-Options: nosniff",
+                "x-ms-environment: North Europe-prod-3,_cnsVMSS-6_26",
+                "x-ms-latency: 40018.2038",
+                "Access-Control-Allow-Origin: https://teams.microsoft.com",
+                "Access-Control-Allow-Credentials: true",
+                "Connection: keep-alive"
+            ]
+        }
+    }
+}
+```
+
+### Listener with Kill Date and Working Hours
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Time-Limited Listener"
+        Hosts        = ["c2.example.com"]
+        HostBind     = "0.0.0.0"
+        PortBind     = 443
+        Secure       = true
+        KillDate     = "2024-06-30 17:00:00"
+        WorkingHours = "09:00-17:00"
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
+    }
+}
+```
+
+### Redirector Setup
+
+When using a redirector (e.g., Apache mod_rewrite, Nginx reverse proxy), configure different bind and connection ports:
+
+```hcl
+Listeners {
+    Http {
+        Name     = "Redirected Listener"
+        Hosts    = ["public.example.com"]  # Public-facing redirector
+        HostBind = "10.0.1.100"             # Internal teamserver IP
+        PortBind = 8443                     # Internal port
+        PortConn = 443                      # External port (redirector)
+        Secure   = true
+    }
+}
+```
+
+## Request Validation
+
+The HTTP/HTTPS listener implements strict request validation to prevent unauthorized access:
+
+1. **User-Agent Validation**: If `UserAgent` is set, requests with mismatched User-Agent headers are rejected
+2. **URI Validation**: If `Uris` are specified, requests to unlisted paths receive a fake 404 response
+3. **Header Validation**: All headers in the `Headers` list must match (case-insensitive value comparison)
+4. **Protocol Validation**: The request must contain valid Havoc protocol data
+
+Failed validation results in a fake nginx 404 error page being served to the client.
+
+## Behind Redirectors
+
+When operating behind a redirector or load balancer, configure the Demon block in your profile:
+
+```hcl
+Demon {
+    TrustXForwardedFor = true
+    // Other demon options...
+}
+```
+
+This instructs the listener to trust the `X-Forwarded-For` header for identifying the true client IP address.
+
+<Warning>
+  Only enable `TrustXForwardedFor` when operating behind a trusted redirector. Enabling this on publicly accessible listeners can allow IP spoofing.
+</Warning>
+
+## Multiple Listeners
+
+You can define multiple HTTP/HTTPS listeners in a single profile:
+
+```hcl
+Listeners {
+    Http {
+        Name     = "Primary Listener"
+        Hosts    = ["primary.example.com"]
+        HostBind = "0.0.0.0"
+        PortBind = 443
+        Secure   = true
+    }
+    
+    Http {
+        Name     = "Backup Listener"
+        Hosts    = ["backup.example.com"]
+        HostBind = "0.0.0.0"
+        PortBind = 8443
+        Secure   = true
+    }
+}
+```
+
+## Troubleshooting
+
+### Listener Won't Start
+
+- Verify the port is not already in use: `netstat -tuln | grep <port>`
+- Check file permissions for custom certificates
+- Ensure `HostBind` IP address exists on the system
+- Review teamserver logs for detailed error messages
+
+### Agents Not Connecting
+
+- Verify firewall rules allow traffic on `PortBind`
+- Check that `Hosts` resolve to the correct IP address
+- Ensure agent profile matches listener configuration (headers, URIs, User-Agent)
+- Test connectivity: `curl -v http(s)://<host>:<port>/<uri>`
+
+### Certificate Errors
+
+- Verify certificate and key file paths are correct and readable
+- Ensure certificate matches the hostname in `Hosts`
+- Check certificate expiration date
+- For auto-generated certificates, verify the listener path is writable

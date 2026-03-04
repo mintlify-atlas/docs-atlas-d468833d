@@ -1,0 +1,374 @@
+---
+title: 'Listeners Profile'
+description: 'Configuration options for HTTP/HTTPS and SMB listeners'
+---
+
+The `Listeners` section defines network listeners for agent callbacks. Havoc currently supports HTTP/HTTPS and SMB listeners with extensive customization options.
+
+## HTTP/HTTPS Listener Syntax
+
+```hcl
+Listeners {
+    Http {
+        Name         = "HTTPS Listener"
+        KillDate     = "2024-12-31 23:59:59"
+        WorkingHours = "08:00-17:00"
+        Hosts        = ["10.0.0.10", "example.com"]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        Uris         = ["/api/v1", "/login.php"]
+        Headers      = ["X-Custom: value"]
+
+        Response {
+            Headers = ["Content-Type: application/json"]
+        }
+    }
+}
+```
+
+## HTTP/HTTPS Parameters
+
+<ParamField path="Name" type="string" required>
+  A descriptive name for the listener. This appears in the Havoc client UI.
+  
+  **Example:** `"HTTPS Listener"` or `"HTTP C2 Server"`
+</ParamField>
+
+<ParamField path="Hosts" type="array[string]" required>
+  List of domains or IP addresses that agents will use to reach the teamserver.
+  
+  **Example:** `["10.0.0.10", "c2.example.com"]`
+  
+  If multiple hosts are provided, the agent will select one based on the `HostRotation` strategy.
+</ParamField>
+
+<ParamField path="HostBind" type="string" default="0.0.0.0">
+  The local address where the listener binds.
+  
+  **Default:** `"0.0.0.0"` (all interfaces)
+  
+  **Example:** `"192.168.1.10"` (specific interface)
+</ParamField>
+
+<ParamField path="HostRotation" type="string" default="round-robin">
+  Strategy for selecting hosts when multiple are defined.
+  
+  **Options:**
+  - `"round-robin"` - Cycle through hosts sequentially
+  - `"random"` - Randomly select a host for each connection
+  
+  **Default:** `"round-robin"`
+</ParamField>
+
+<ParamField path="PortBind" type="integer" required>
+  Port that the teamserver binds to and listens on.
+  
+  **Example:** `443`, `80`, `8080`
+</ParamField>
+
+<ParamField path="PortConn" type="integer" default="PortBind">
+  Port that agents use to connect to the teamserver.
+  
+  If not specified, defaults to `PortBind`. Use this when the teamserver is behind a redirector listening on a different port.
+  
+  **Example:** Teamserver on port 8443, redirector on port 443: set `PortBind = 8443` and `PortConn = 443`
+</ParamField>
+
+<ParamField path="Secure" type="boolean" required>
+  Enables HTTPS (TLS) for encrypted communication.
+  
+  - `true` - HTTPS (uses TLS)
+  - `false` - HTTP (plaintext)
+  
+  **Default:** `true`
+  
+  <Warning>
+    Always use `Secure = true` in production environments to encrypt agent traffic.
+  </Warning>
+</ParamField>
+
+<ParamField path="UserAgent" type="string" required>
+  The User-Agent header that agents include in all HTTP requests.
+  
+  **Example:** `"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"`
+  
+  Choose a User-Agent that blends with the target environment.
+</ParamField>
+
+<ParamField path="Uris" type="array[string]" required>
+  List of URI paths that agents use for callbacks.
+  
+  **Example:** `["/api/v1/data", "/login.php", "/assets/main.js"]`
+  
+  If multiple URIs are provided, agents randomly select one for each request.
+</ParamField>
+
+<ParamField path="Headers" type="array[string]" optional>
+  Custom HTTP headers included in agent requests.
+  
+  **Format:** Each header is a string in `"Header-Name: value"` format.
+  
+  **Example:**
+  ```hcl
+  Headers = [
+      "Accept: application/json",
+      "X-Custom-Header: true",
+      "Referer: https://www.google.com"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="KillDate" type="string" optional>
+  Date and time when agents will terminate themselves (UTC timezone).
+  
+  **Format:** `"YYYY-MM-DD HH:MM:SS"`
+  
+  **Example:** `"2024-12-31 23:59:59"`
+  
+  Useful for ensuring agents self-destruct after an engagement ends.
+</ParamField>
+
+<ParamField path="WorkingHours" type="string" optional>
+  Time window during which agents will check in.
+  
+  **Format:** `"HH:MM-HH:MM"` (24-hour format)
+  
+  **Example:** `"08:00-17:00"` (only check in during business hours)
+  
+  Agents will not beacon outside of these hours, helping to blend with legitimate traffic patterns.
+</ParamField>
+
+## Response Configuration
+
+The `Response` block configures HTTP headers returned by the teamserver.
+
+<ParamField path="Response.Headers" type="array[string]" optional>
+  Custom HTTP headers included in teamserver responses.
+  
+  **Format:** Each header is a string in `"Header-Name: value"` format.
+  
+  **Example:**
+  ```hcl
+  Response {
+      Headers = [
+          "Content-Type: application/json",
+          "Server: nginx/1.18.0",
+          "X-Frame-Options: DENY"
+      ]
+  }
+  ```
+</ParamField>
+
+## Examples
+
+### Basic HTTPS Listener
+
+```hcl
+Listeners {
+    Http {
+        Name         = "HTTPS Listener"
+        Hosts        = ["10.0.0.10"]
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        Uris         = ["/api/v1/data"]
+
+        Response {
+            Headers = ["Content-Type: application/json"]
+        }
+    }
+}
+```
+
+### Microsoft Teams Emulation
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Teams Profile - HTTPS"
+        Hosts        = ["example.com"]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        KillDate     = "2024-12-31 23:59:59"
+        UserAgent    = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+
+        Uris = [
+            "/Collector/2.0/settings/"
+        ]
+
+        Headers = [
+            "Accept: json",
+            "Referer: https://teams.microsoft.com/_",
+            "x-ms-session-id: f73c3186-057a-d996-3b63-b6e5de6ef20c",
+            "x-ms-client-type: desktop",
+            "x-mx-client-version: 27/1.0.0.2021020410",
+            "Accept-Encoding: gzip, deflate, br",
+            "Origin: https://teams.microsoft.com"
+        ]
+
+        Response {
+            Headers = [
+                "Content-Type: application/json; charset=utf-8",
+                "Server: Microsoft-HTTPAPI/2.0",
+                "X-Content-Type-Options: nosniff",
+                "x-ms-environment: North Europe-prod-3,_cnsVMSS-6_26",
+                "x-ms-latency: 40018.2038",
+                "Access-Control-Allow-Origin: https://teams.microsoft.com",
+                "Access-Control-Allow-Credentials: true",
+                "Connection: keep-alive"
+            ]
+        }
+    }
+}
+```
+
+### Multiple Hosts with Rotation
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Multi-Host Listener"
+        Hosts        = [
+            "cdn.example.com",
+            "api.example.com",
+            "192.168.1.100"
+        ]
+        HostRotation = "random"
+        PortBind     = 8080
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        
+        Uris = [
+            "/api/v1/auth",
+            "/api/v1/sync",
+            "/cdn/content.js"
+        ]
+
+        Response {
+            Headers = ["Content-Type: application/json"]
+        }
+    }
+}
+```
+
+### Time-Restricted Listener
+
+```hcl
+Listeners {
+    Http {
+        Name         = "Business Hours Only"
+        Hosts        = ["c2.example.com"]
+        PortBind     = 443
+        Secure       = true
+        WorkingHours = "08:00-18:00"
+        KillDate     = "2024-06-30 23:59:59"
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        
+        Uris = ["/api/update"]
+
+        Response {
+            Headers = ["Content-Type: text/plain"]
+        }
+    }
+}
+```
+
+## SMB Listener
+
+SMB listeners are used for peer-to-peer agent communication, typically for lateral movement and pivoting.
+
+```hcl
+Listeners {
+    Smb {
+        Name     = "Pivot - SMB"
+        PipeName = "demon_pipe"
+    }
+}
+```
+
+<ParamField path="Name" type="string" required>
+  Descriptive name for the SMB listener.
+</ParamField>
+
+<ParamField path="PipeName" type="string" required>
+  Named pipe that agents use for SMB communication.
+  
+  **Example:** `"demon_pipe"`, `"msagent_pipe"`
+</ParamField>
+
+## Multiple Listeners
+
+You can define multiple listeners in a single profile:
+
+```hcl
+Listeners {
+    Http {
+        Name     = "Primary HTTPS"
+        Hosts    = ["primary.example.com"]
+        PortBind = 443
+        Secure   = true
+        UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        Uris     = ["/api"]
+
+        Response {
+            Headers = ["Content-Type: application/json"]
+        }
+    }
+
+    Http {
+        Name     = "Backup HTTP"
+        Hosts    = ["backup.example.com"]
+        PortBind = 8080
+        Secure   = false
+        UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        Uris     = ["/data"]
+
+        Response {
+            Headers = ["Content-Type: text/html"]
+        }
+    }
+
+    Smb {
+        Name     = "Internal Pivot"
+        PipeName = "havoc_pivot"
+    }
+}
+```
+
+## OPSEC Considerations
+
+<Note>
+  **Blending with Normal Traffic**
+  
+  - Choose User-Agents that match the target environment
+  - Use realistic URIs that mimic legitimate applications
+  - Set appropriate WorkingHours to match business operations
+  - Consider using multiple URIs and hosts for variety
+</Note>
+
+<Warning>
+  **Certificate Management**
+  
+  When using `Secure = true`, Havoc generates a self-signed certificate. In mature environments, consider:
+  - Using a valid SSL certificate from a trusted CA
+  - Implementing domain fronting techniques
+  - Placing the teamserver behind a reverse proxy with proper certificates
+</Warning>
+
+<Note>
+  **Kill Date Best Practices**
+  
+  - Always set a KillDate for time-limited engagements
+  - Set the date slightly after the engagement end date
+  - Communicate the KillDate to the client organization
+  - Test that agents properly terminate at the specified time
+</Note>

@@ -1,0 +1,399 @@
+---
+title: config
+description: Dynamically modify Demon agent configuration at runtime
+---
+
+## Overview
+
+The `config` command allows operators to modify the Demon agent's configuration settings at runtime without regenerating payloads. This enables dynamic adaptation to operational requirements and defensive posture.
+
+## Syntax
+
+```bash
+config [config_key] [config_value]
+```
+
+## Configuration Categories
+
+### Implant Settings
+
+<ParamField path="implant.verbose" type="boolean">
+  Enable or disable verbose output from the agent.
+  
+  ```bash
+  config implant.verbose true
+  config implant.verbose false
+  ```
+  
+  - `true` - Enable detailed logging and output
+  - `false` - Minimal output (default)
+</ParamField>
+
+<ParamField path="implant.sleep-obf.technique" type="integer">
+  Set the sleep obfuscation technique.
+  
+  ```bash
+  config implant.sleep-obf.technique 2
+  ```
+  
+  - `0` - WaitForSingleObjectEx (no obfuscation)
+  - `1` - FOLIAGE
+  - `2` - Ekko
+</ParamField>
+
+<ParamField path="implant.sleep-obf.start-addr" type="string">
+  Configure the return address for stack spoofing during sleep.
+  
+  ```bash
+  config implant.sleep-obf.start-addr ntdll!NtAddBootEntry+0x14
+  ```
+  
+  Format: `library!function+0xoffset`
+  
+  Example: `ntdll!NtAddBootEntry+0x14`
+</ParamField>
+
+<ParamField path="implant.coffee.veh" type="boolean">
+  Enable or disable Vectored Exception Handler for BOF execution.
+  
+  ```bash
+  config implant.coffee.veh true
+  ```
+  
+  - `true` - Use VEH for exception handling
+  - `false` - Standard exception handling
+</ParamField>
+
+<ParamField path="implant.coffee.threaded" type="boolean">
+  Enable or disable threaded BOF execution.
+  
+  ```bash
+  config implant.coffee.threaded true
+  ```
+  
+  - `true` - Execute BOFs in separate threads
+  - `false` - Execute BOFs in main thread
+</ParamField>
+
+### Memory Management
+
+<ParamField path="memory.alloc" type="integer">
+  Set the memory allocation technique.
+  
+  ```bash
+  config memory.alloc 1
+  ```
+  
+  - `0` - VirtualAllocEx (Win32 API)
+  - `1` - NtAllocateVirtualMemory (Indirect syscall)
+</ParamField>
+
+<ParamField path="memory.execute" type="integer">
+  Set the memory protection technique.
+  
+  ```bash
+  config memory.execute 1
+  ```
+  
+  - `0` - VirtualProtectEx (Win32 API)
+  - `1` - NtProtectVirtualMemory (Indirect syscall)
+</ParamField>
+
+### Injection Settings
+
+<ParamField path="inject.technique" type="integer">
+  Set the thread creation technique for injection.
+  
+  ```bash
+  config inject.technique 3
+  ```
+  
+  - `0` - Default (configured in profile)
+  - `1` - CreateRemoteThread
+  - `2` - NtCreateThreadEx (syscall)
+  - `3` - NtQueueApcThread (syscall)
+</ParamField>
+
+<ParamField path="inject.spoofaddr" type="string">
+  Configure return address spoofing for injection.
+  
+  ```bash
+  config inject.spoofaddr kernel32!BaseThreadInitThunk+0x14
+  ```
+  
+  Format: `library!function+0xoffset`
+</ParamField>
+
+<ParamField path="inject.spawn64" type="string">
+  Set the 64-bit process to spawn for fork & run operations.
+  
+  ```bash
+  config inject.spawn64 C:\Windows\System32\RuntimeBroker.exe
+  ```
+  
+  Common options:
+  - `C:\Windows\System32\werfault.exe`
+  - `C:\Windows\System32\dllhost.exe`
+  - `C:\Windows\System32\RuntimeBroker.exe`
+  - `C:\Windows\System32\svchost.exe`
+</ParamField>
+
+<ParamField path="inject.spawn32" type="string">
+  Set the 32-bit process to spawn for fork & run operations.
+  
+  ```bash
+  config inject.spawn32 C:\Windows\SysWOW64\werfault.exe
+  ```
+  
+  Common options:
+  - `C:\Windows\SysWOW64\werfault.exe`
+  - `C:\Windows\SysWOW64\dllhost.exe`
+  - `C:\Windows\SysWOW64\rundll32.exe`
+</ParamField>
+
+### Operational Security
+
+<ParamField path="killdate" type="string">
+  Set or update the agent's self-destruct date (UTC).
+  
+  ```bash
+  config killdate "2026-12-31 23:59:59"
+  config killdate 0  # Disable killdate
+  ```
+  
+  Format: `YYYY-MM-DD HH:MM:SS` (UTC)
+  
+  When the kill date is reached, the agent will:
+  - Clean up artifacts
+  - Exit the thread/process
+  - Stop communicating with teamserver
+</ParamField>
+
+<ParamField path="workinghours" type="string">
+  Set the hours during which the agent will callback.
+  
+  ```bash
+  config workinghours "08:00-17:00"
+  config workinghours 0  # Disable working hours
+  ```
+  
+  Format: `HH:MM-HH:MM` (24-hour format)
+  
+  Outside working hours, the agent will not check in to the teamserver.
+</ParamField>
+
+## Examples
+
+### Configure Maximum OPSEC
+
+```bash
+# Use indirect syscalls for all operations
+config memory.alloc 1
+config memory.execute 1
+config inject.technique 3
+
+# Enable advanced sleep obfuscation
+config implant.sleep-obf.technique 2
+
+# Set legitimate spawn processes
+config inject.spawn64 C:\Windows\System32\RuntimeBroker.exe
+config inject.spawn32 C:\Windows\SysWOW64\RuntimeBroker.exe
+```
+
+### Configure for Speed (Less OPSEC)
+
+```bash
+# Use faster Win32 APIs
+config memory.alloc 0
+config memory.execute 0
+config inject.technique 1
+
+# Disable sleep obfuscation
+config implant.sleep-obf.technique 0
+```
+
+### Set Operational Timeframe
+
+```bash
+# Only operate during business hours (8 AM - 5 PM)
+config workinghours "08:00-17:00"
+
+# Set kill date for end of engagement
+config killdate "2026-06-30 23:59:59"
+```
+
+### Configure BOF Execution
+
+```bash
+# Enable threaded BOF execution
+config implant.coffee.threaded true
+
+# Enable VEH for better error handling
+config implant.coffee.veh true
+```
+
+### Modify Sleep Obfuscation
+
+```bash
+# Switch to Ekko sleep obfuscation
+config implant.sleep-obf.technique 2
+
+# Configure stack spoofing return address
+config implant.sleep-obf.start-addr ntdll!NtAddBootEntry+0x14
+```
+
+## Configuration IDs (Internal)
+
+These are the internal command IDs used by the agent (from commands.go:80-98):
+
+```go
+CONFIG_IMPLANT_SPFTHREADSTART  = 3   // Sleep obfuscation start address
+CONFIG_IMPLANT_VERBOSE         = 4   // Verbose output
+CONFIG_IMPLANT_SLEEP_TECHNIQUE = 5   // Sleep obfuscation technique
+CONFIG_IMPLANT_COFFEE_THREADED = 6   // Threaded BOF execution
+CONFIG_IMPLANT_COFFEE_VEH      = 7   // VEH for BOFs
+
+CONFIG_MEMORY_ALLOC   = 101  // Memory allocation technique
+CONFIG_MEMORY_EXECUTE = 102  // Memory protection technique
+
+CONFIG_INJECT_TECHNIQUE = 150  // Thread creation technique
+CONFIG_INJECT_SPOOFADDR = 151  // Injection return address spoofing
+CONFIG_INJECT_SPAWN64   = 152  // 64-bit spawn process
+CONFIG_INJECT_SPAWN32   = 153  // 32-bit spawn process
+
+CONFIG_KILLDATE     = 154  // Agent kill date
+CONFIG_WORKINGHOURS = 155  // Working hours restriction
+```
+
+## OPSEC Impact
+
+<Tabs>
+  <Tab title="High OPSEC">
+    Recommended settings for evasion:
+    
+    ```bash
+    config memory.alloc 1
+    config memory.execute 1
+    config inject.technique 3
+    config implant.sleep-obf.technique 2
+    config inject.spawn64 C:\Windows\System32\RuntimeBroker.exe
+    ```
+    
+    **Impact:**
+    - Uses indirect syscalls to bypass usermode hooks
+    - Advanced sleep obfuscation (Ekko)
+    - APC-based injection
+    - Legitimate spawn process
+  </Tab>
+  
+  <Tab title="Balanced">
+    Balance between speed and stealth:
+    
+    ```bash
+    config memory.alloc 1
+    config memory.execute 0
+    config inject.technique 2
+    config implant.sleep-obf.technique 1
+    ```
+    
+    **Impact:**
+    - Syscalls for allocation
+    - Win32 for protection (faster)
+    - NtCreateThreadEx for injection
+    - FOLIAGE sleep obfuscation
+  </Tab>
+  
+  <Tab title="Speed">
+    Maximum speed, minimal evasion:
+    
+    ```bash
+    config memory.alloc 0
+    config memory.execute 0
+    config inject.technique 1
+    config implant.sleep-obf.technique 0
+    ```
+    
+    **Impact:**
+    - All Win32 APIs (fast but detectable)
+    - CreateRemoteThread (most detected)
+    - No sleep obfuscation
+  </Tab>
+</Tabs>
+
+## Return Values
+
+<ResponseField name="status" type="string">
+  Configuration update status: Success or Error
+</ResponseField>
+
+<ResponseField name="config_key" type="string">
+  The configuration key that was modified
+</ResponseField>
+
+<ResponseField name="config_value" type="string">
+  The new value that was set
+</ResponseField>
+
+## Verification
+
+After changing configuration, use `checkin` to verify settings:
+
+```bash
+config inject.spawn64 C:\Windows\System32\RuntimeBroker.exe
+checkin
+```
+
+The checkin output will reflect updated configuration values.
+
+## Use Cases
+
+### Adapt to Detection
+
+```bash
+# If injection is being detected, switch techniques
+config inject.technique 3
+
+# Change spawn process to avoid signatures
+config inject.spawn64 C:\Windows\System32\werfault.exe
+```
+
+### Operational Constraints
+
+```bash
+# Only operate during business hours to blend in
+config workinghours "08:00-17:00"
+
+# Set kill date for end of red team engagement
+config killdate "2026-05-15 23:59:59"
+```
+
+### Performance Tuning
+
+```bash
+# Speed up operations in lab environment
+config memory.alloc 0
+config memory.execute 0
+config implant.sleep-obf.technique 0
+```
+
+### Debugging
+
+```bash
+# Enable verbose output for troubleshooting
+config implant.verbose true
+
+# ... run operations ...
+
+# Disable when done
+config implant.verbose false
+```
+
+## Notes
+
+- Configuration changes take effect immediately
+- Settings do not persist across agent restarts
+- Some settings only apply to future operations (e.g., spawn process)
+- Kill date and working hours are checked during sleep cycles
+- Invalid values may cause errors or be silently ignored
+- Use `checkin` to verify configuration changes
+- Profile defaults are used until explicitly changed with `config`

@@ -1,0 +1,150 @@
+---
+title: Demon Agent Overview
+description: Introduction to Havoc's primary C2 agent written in C and assembly
+---
+
+## What is Demon?
+
+Demon is Havoc Framework's primary post-exploitation agent, written in C and assembly. It is designed to be a modern, malleable, and stealthy command and control agent with advanced evasion capabilities.
+
+## Key Characteristics
+
+### Implementation
+
+- **Language**: Written in C and x64/x86 assembly
+- **Architecture Support**: Full x64 and x86 support
+- **Format Options**: Windows PE executable (EXE), Dynamic Link Library (DLL), and raw shellcode
+- **Reflective Loading**: Includes KaynLdr reflective loader for in-memory execution
+
+### Design Philosophy
+
+Demon is built with operational security (OPSEC) as a core principle:
+
+<CardGroup cols={2}>
+  <Card title="Evasion First" icon="shield-halved">
+    Indirect syscalls, return address spoofing, and sleep obfuscation techniques built-in
+  </Card>
+  <Card title="Modular Architecture" icon="puzzle-piece">
+    Organized codebase with clear separation between core, injection, crypto, and execution modules
+  </Card>
+  <Card title="Minimal Footprint" icon="feather">
+    Dynamic API resolution via PEB walking and hash-based lookups
+  </Card>
+  <Card title="Flexible Execution" icon="arrows-split-up-and-left">
+    Support for BOF/COFF execution, .NET assemblies, and shellcode injection
+  </Card>
+</CardGroup>
+
+## Source Code Structure
+
+The Demon agent source is organized into logical directories:
+
+| Directory | Description |
+|-----------|-------------|
+| `src/asm` | Assembly code for return address stack spoofing and syscall stubs |
+| `src/core` | Core functionality including transport, Win32 API resolution, and syscalls |
+| `src/crypt` | AES encryption/decryption for C2 communications |
+| `src/inject` | Process injection techniques and utilities |
+| `src/main` | Entry points for PE executable, DLL, and service binaries |
+
+## Core Capabilities
+
+### Evasion Techniques
+
+<Accordion title="Indirect Syscalls">
+  Demon dynamically crafts syscall stubs from `ntdll.dll` on disk, allowing it to bypass userland hooks placed by EDR solutions. The syscalls execute through legitimate `ntdll.dll` address space, evading process instrumentation callbacks.
+</Accordion>
+
+<Accordion title="Return Address Spoofing">
+  On x64 systems, Demon implements return address stack spoofing to hide the real return address during function calls. This technique makes call stacks appear legitimate during memory scans.
+</Accordion>
+
+<Accordion title="Sleep Obfuscation">
+  Multiple sleep obfuscation techniques (Ekko, Zilean, FOLIAGE) encrypt the agent in memory during sleep periods, making memory scans ineffective.
+</Accordion>
+
+<Accordion title="AMSI/ETW Patching">
+  Demon can patch AMSI (Anti-Malware Scan Interface) and ETW (Event Tracing for Windows) in-memory using hardware breakpoints or direct memory modification to bypass behavioral detection.
+</Accordion>
+
+### Execution Methods
+
+- **BOF/COFF Loader**: Execute Beacon Object Files (BOFs) and COFF objects in-memory
+- **.NET Assembly Execution**: Load and execute .NET assemblies via CLR hosting
+- **Shellcode Injection**: Multiple injection techniques with syscall or Win32 API options
+- **Process Hollowing**: Spawn sacrificial processes for fork-and-run operations
+- **Token Manipulation**: Comprehensive token theft, impersonation, and privilege escalation
+
+### Communication
+
+- **Transport Protocols**: HTTP/HTTPS and SMB named pipes
+- **Encryption**: AES-256 encryption for all C2 traffic
+- **Malleable Profiles**: Configurable HTTP headers, URIs, User-Agent strings
+- **Proxy Support**: Automatic proxy detection and configuration
+
+## Configuration Options
+
+Demon's behavior can be configured both at compile-time and runtime:
+
+<Tabs>
+  <Tab title="Compile-Time">
+    - Sleep mask technique selection
+    - Indirect syscalls vs Win32 APIs
+    - Stack spoofing enablement
+    - Proxy loading method
+    - AMSI/ETW patching technique
+  </Tab>
+  <Tab title="Runtime">
+    - Sleep interval and jitter
+    - Memory allocation/execution methods
+    - Injection technique
+    - Spawn process paths (x64/x86)
+    - Kill date and working hours
+  </Tab>
+</Tabs>
+
+## Command Structure
+
+Demon implements a comprehensive command dispatcher that handles:
+
+- Process management and enumeration
+- File system operations
+- Token and privilege management
+- Network and domain enumeration
+- Kerberos ticket operations
+- Job management for long-running tasks
+- Screenshot capture
+- Pivot operations (SMB)
+
+<Note>
+  All commands are documented in detail in the [Commands](/demon/commands) reference.
+</Note>
+
+## Multi-Threading Support
+
+Demon implements a job management system for handling concurrent operations:
+
+- Long-running tasks execute in separate threads
+- Jobs can be suspended, resumed, or killed
+- Thread-safe package queue for C2 communications
+
+<Warning>
+  Sleep obfuscation is **disabled** when job threads are running. This prevents corruption of encrypted memory while other threads access code/data.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Generate Payloads" icon="hammer" href="/demon/generation">
+    Learn how to generate Demon payloads via the Havoc client
+  </Card>
+  <Card title="Explore Features" icon="stars" href="/demon/features">
+    Deep dive into Demon's evasion and execution capabilities
+  </Card>
+  <Card title="Command Reference" icon="terminal" href="/demon/commands">
+    Complete reference of all Demon commands
+  </Card>
+  <Card title="Sleep Obfuscation" icon="moon" href="/demon/sleep-obfuscation">
+    Configure sleep obfuscation techniques
+  </Card>
+</CardGroup>

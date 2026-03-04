@@ -1,0 +1,395 @@
+---
+title: Teamserver
+description: Understanding Havoc's Go-based teamserver backend
+---
+
+# Teamserver
+
+The Havoc teamserver is the core backend component written in Go. It manages all agent sessions, handles client connections, spawns listeners, and generates payloads.
+
+## Overview
+
+The teamserver acts as the central hub between operator clients and deployed agents:
+
+- **Multi-user**: Supports multiple operators connecting simultaneously
+- **Persistent**: Saves sessions to SQLite database
+- **Configurable**: Driven by YAOTL profile files
+- **Cross-platform**: Runs on Linux, macOS, and Docker
+
+<Info>
+The teamserver requires Go 1.18+ and several build dependencies (MinGW, NASM) for payload compilation.
+</Info>
+
+## Core Responsibilities
+
+### 1. Client Connection Management
+
+The teamserver runs a WebSocket server for operator clients:
+
+```go
+// From teamserver.go
+t.Server.Engine.GET("/havoc/", func(context *gin.Context) {
+    var upgrade websocket.Upgrader
+    WebSocket, err := upgrade.Upgrade(context.Writer, context.Request, nil)
+    
+    t.Clients.Store(ClientID, &Client{
+        Username:      "",
+        GlobalIP:      WebSocket.RemoteAddr().String(),
+        Connection:    WebSocket,
+        Authenticated: false,
+    })
+    
+    go t.handleRequest(ClientID)
+})
+```
+
+**Authentication Flow**:
+1. Client connects to `wss://teamserver:40056/havoc/`
+2. Teamserver generates self-signed TLS certificate
+3. Client sends credentials with SHA3-256 hashed password
+4. Teamserver validates against YAOTL profile operators
+5. On success, sends all session state to client
+
+<Note>
+Each client connection runs in its own goroutine for concurrent handling.
+</Note>
+
+### 2. Listener Management
+
+The teamserver spawns and manages multiple listener types:
+
+**HTTP/HTTPS Listeners**
+```go
+// Configured in YAOTL profile
+for _, listener := range t.Profile.Config.Listener.ListenerHTTP {
+    HandlerData := handlers.HTTPConfig{
+        Name:         listener.Name,
+        Hosts:        listener.Hosts,
+        HostBind:     listener.HostBind,
+        PortBind:     strconv.Itoa(listener.PortBind),
+        UserAgent:    listener.UserAgent,
+        Headers:      listener.Headers,
+        Uris:         listener.Uris,
+        Secure:       listener.Secure,
+    }
+    t.ListenerStart(handlers.LISTENER_HTTP, HandlerData)
+}
+```
+
+**SMB Named Pipe Listeners**
+```go
+for _, listener := range t.Profile.Config.Listener.ListenerSMB {
+    HandlerData := handlers.SMBConfig{
+        Name:     listener.Name,
+        PipeName: listener.PipeName,
+    }
+    t.ListenerStart(handlers.LISTENER_PIVOT_SMB, HandlerData)
+}
+```
+
+**External C2 Listeners**
+```go
+for _, listener := range t.Profile.Config.Listener.ListenerExternal {
+    HandlerData := handlers.ExternalConfig{
+        Name:     listener.Name,
+        Endpoint: listener.Endpoint,
+    }
+    t.ListenerStart(handlers.LISTENER_EXTERNAL, HandlerData)
+}
+```
+
+<Tip>
+Listeners are automatically restored from the database on teamserver restart.
+</Tip>
+
+### 3. Agent Session Handling
+
+The teamserver processes agent callbacks:
+
+```go
+// From handlers.go
+func handleDemonAgent(Teamserver agent.TeamServer, Header agent.Header, ExternalIP string) {
+    // Check magic value
+    if Header.MagicValue == agent.DEMON_MAGIC_VALUE {
+        
+        // New agent registration
+        if Command == agent.DEMON_INIT {
+            Agent = agent.ParseDemonRegisterRequest(Header.AgentID, Header.Data, ExternalIP)
+            Teamserver.AgentAdd(Agent)
+            Teamserver.AgentSendNotify(Agent)
+        }
+        
+        // Existing agent checking in
+        if Teamserver.AgentExist(Header.AgentID) {
+            Agent = Teamserver.AgentInstance(Header.AgentID)
+            Agent.UpdateLastCallback(Teamserver)
+            
+            // Dispatch commands to agent
+            Agent.TaskDispatch(RequestID, Command, Parser, Teamserver)
+            
+            // Send queued jobs or NOJOB
+            if len(Agent.JobQueue) == 0 {
+                Response = agent.BuildPayloadMessage(NoJob, AESKey, AESIv)
+            } else {
+                job := Agent.GetQueuedJobs()
+                Response = agent.BuildPayloadMessage(job, AESKey, AESIv)
+            }
+        }
+    }
+}
+```
+
+**Agent State Management**:
+- Each agent has unique AgentID, AES key, and IV
+- Job queue stores pending commands
+- Last callback time tracked for health monitoring
+- Pivot relationships stored for linked agents
+
+### 4. Payload Generation
+
+The teamserver compiles Demon payloads on demand:
+
+```go
+// From teamserver.go
+func (t *Teamserver) FindSystemPackages() bool {
+    // Locate MinGW compilers
+    t.Settings.Compiler64 = t.Profile.Config.Server.Build.Compiler64
+    t.Settings.Compiler32 = t.Profile.Config.Server.Build.Compiler86
+    t.Settings.Nasm = t.Profile.Config.Server.Build.Nasm
+    
+    logger.Info(fmt.Sprintf(
+        "Build: \n"+
+        " - Compiler x64 : %v\n"+
+        " - Compiler x86 : %v\n"+
+        " - Nasm         : %v",
+        t.Settings.Compiler64,
+        t.Settings.Compiler32,
+        t.Settings.Nasm,
+    ))
+}
+```
+
+**Supported Formats**:
+- **EXE**: Standalone executable
+- **DLL**: Dynamic library with exported functions
+- **Shellcode**: Position-independent code for injection
+
+<Note>
+Compilers must be specified in the YAOTL profile's `Build` block or auto-detected from PATH.
+</Note>
+
+### 5. Event Broadcasting
+
+The teamserver maintains event synchronization across all clients:
+
+```go
+func (t *Teamserver) EventBroadcast(ExceptClient string, pk packager.Package) {
+    t.Clients.Range(func(key, value any) bool {
+        ClientID := key.(string)
+        if ExceptClient != ClientID {
+            t.SendEvent(ClientID, pk)
+        }
+        return true
+    })
+}
+
+func (t *Teamserver) EventAppend(event packager.Package) {
+    if event.Head.OneTime != "true" {
+        t.EventsList = append(t.EventsList, event)
+    }
+}
+```
+
+**Event Types**:
+- New agent registration
+- Agent output and command results
+- Listener status changes
+- Chat messages
+- Loot and downloads
+
+### 6. Database Persistence
+
+All session data persists to SQLite:
+
+```go
+// From teamserver.go
+if t.DB.Existed() {
+    logger.Info("Opens existing database: " + DBPath)
+} else {
+    logger.Info("Creates new database: " + DBPath)
+}
+
+// Restore listeners
+for _, listener := range t.DB.ListenerAll() {
+    // Restart HTTP/HTTPS/SMB/External listeners
+}
+
+// Restore agents
+Agents := t.DB.AgentAll()
+for _, Agent := range Agents {
+    t.AgentAdd(Agent)
+}
+
+logger.Info(fmt.Sprintf("Restored %v agents from last session", len(Agents)))
+```
+
+## Starting the Teamserver
+
+### Basic Usage
+
+```bash
+# With a custom profile
+sudo ./teamserver server --profile profiles/havoc.yaotl -v
+
+# With the default profile
+sudo ./teamserver server --default -v
+```
+
+<Tip>
+Root privileges are required to bind listeners on ports below 1024 (e.g., port 80/443).
+</Tip>
+
+### Command Line Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--profile <path>` | Path to YAOTL profile file |
+| `--default` | Use default profile (data/havoc.yaotl) |
+| `-v, --verbose` | Enable verbose output with timestamps |
+| `--debug` | Enable debug logging |
+| `--host <ip>` | Override teamserver bind address |
+| `--port <port>` | Override teamserver port |
+
+### Startup Sequence
+
+```go
+// From server.go
+func (t *Teamserver) Start() {
+    // 1. Parse YAOTL profile
+    Server.SetProfile(DirPath + "/data/havoc.yaotl")
+    
+    // 2. Verify build tools (MinGW, NASM)
+    Server.FindSystemPackages()
+    
+    // 3. Generate TLS certificates
+    Cert, Key, err = certs.HTTPSGenerateRSACertificate(Host)
+    
+    // 4. Start WebSocket server
+    t.Server.Engine.RunTLS(Host+":"+Port, certPath, keyPath)
+    
+    // 5. Initialize Service API (if configured)
+    if t.Profile.Config.Service != nil {
+        t.Service.Start()
+    }
+    
+    // 6. Start listeners from profile
+    for _, listener := range t.Profile.Config.Listener.ListenerHTTP {
+        t.ListenerStart(handlers.LISTENER_HTTP, HandlerData)
+    }
+    
+    // 7. Restore listeners from database
+    for _, listener := range t.DB.ListenerAll() {
+        t.ListenerStart(listener.Protocol, listener.Config)
+    }
+    
+    // 8. Restore agents from database
+    Agents := t.DB.AgentAll()
+    for _, Agent := range Agents {
+        t.AgentAdd(Agent)
+        t.AgentSendNotify(Agent)
+    }
+}
+```
+
+## Data Storage Locations
+
+<CardGroup cols={2}>
+  <Card title="Database">
+    `data/havoc.db` - SQLite database
+  </Card>
+  <Card title="Logs">
+    `data/loot/YYYY.MM.DD_HH:MM:SS/` - Session logs
+  </Card>
+  <Card title="Certificates">
+    `data/server.cert`, `data/server.key` - TLS certs
+  </Card>
+  <Card title="Profiles">
+    `profiles/*.yaotl` - Configuration files
+  </Card>
+</CardGroup>
+
+## Service API (External C2)
+
+The teamserver exposes an endpoint for custom agents:
+
+```go
+// From teamserver.go
+if t.Profile.Config.Service != nil {
+    t.Service = service.NewService(t.Server.Engine)
+    t.Service.Teamserver = t
+    t.Service.Config = *t.Profile.Config.Service
+    
+    if len(t.Service.Config.Endpoint) > 0 {
+        t.Service.Start()
+        logger.Info(fmt.Sprintf(
+            "starting service handle on %v",
+            TeamserverWs+"/"+t.Service.Config.Endpoint,
+        ))
+    }
+}
+```
+
+**Configuration** (in YAOTL profile):
+```
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+```
+
+Custom agents can POST to this endpoint with their own magic values and protocols.
+
+## Webhook Integration
+
+Optional Discord webhooks for notifications:
+
+```go
+if t.Profile.Config.WebHook != nil {
+    if t.Profile.Config.WebHook.Discord != nil {
+        t.WebHooks.SetDiscord(
+            AvatarUrl,
+            UserName,
+            t.Profile.Config.WebHook.Discord.WebHook,
+        )
+    }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Security" icon="shield">
+    - Use strong operator passwords
+    - Restrict teamserver to trusted networks
+    - Enable TLS on HTTP listeners
+    - Rotate AES keys between operations
+  </Card>
+  <Card title="Performance" icon="gauge">
+    - Limit concurrent agent callbacks
+    - Use appropriate sleep/jitter values
+    - Monitor database size
+    - Archive old sessions
+  </Card>
+  <Card title="Reliability" icon="clock">
+    - Backup database regularly
+    - Test profiles before deployment
+    - Monitor listener health
+    - Set appropriate kill dates
+  </Card>
+  <Card title="Operations" icon="users">
+    - Document operator credentials
+    - Coordinate listener ports
+    - Use unique listener names
+    - Review logs after sessions
+  </Card>
+</CardGroup>

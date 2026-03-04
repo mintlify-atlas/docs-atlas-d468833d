@@ -1,0 +1,586 @@
+---
+title: YAOTL Profiles
+description: Configure Havoc Framework with YAOTL profile files
+---
+
+# YAOTL Profiles
+
+Havoc Framework uses YAOTL (Yet Another Operator Translation Language) files to configure the teamserver, operators, listeners, and agent behavior. These profiles define everything from network settings to agent sleep times.
+
+## Overview
+
+YAOTL is a custom configuration language similar to HCL (HashiCorp Configuration Language). It provides:
+
+- **Block-based syntax**: Hierarchical configuration structure
+- **Type safety**: Validated configuration with clear error messages
+- **Comments**: Document your profiles inline
+- **Profiles**: Reusable configurations for different operations
+
+<Info>
+YAOTL profile files use the `.yaotl` extension and are typically stored in the `profiles/` directory.
+</Info>
+
+## Profile Structure
+
+A complete YAOTL profile consists of five main blocks:
+
+```
+Teamserver { }   # Server configuration and build tools
+Operators { }    # User authentication
+Listeners { }    # HTTP/HTTPS/SMB listener definitions (optional)
+Demon { }        # Default agent configuration
+Service { }      # External C2 / custom agent API (optional)
+```
+
+<Note>
+Only `Teamserver`, `Operators`, and `Demon` blocks are required. `Listeners` and `Service` are optional.
+</Note>
+
+## Teamserver Block
+
+Configures the teamserver host, port, and build tools.
+
+### Basic Configuration
+
+```yaotl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+
+    Build {
+        Compiler64 = "data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Host` | string | Yes | IP address to bind WebSocket server (0.0.0.0 for all) |
+| `Port` | int | Yes | Port for operator client connections (default: 40056) |
+| `Build` | block | No | Build tool configuration |
+
+### Build Block
+
+Specifies paths to compilation tools:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Compiler64` | string | No | Path to x64 MinGW compiler (auto-detected if omitted) |
+| `Compiler86` | string | No | Path to x86 MinGW compiler (auto-detected if omitted) |
+| `Nasm` | string | No | Path to NASM assembler (auto-detected if omitted) |
+
+<Tip>
+If you omit the `Build` block, the teamserver will search for compilers in your PATH.
+</Tip>
+
+## Operators Block
+
+Defines authorized users and their credentials.
+
+### Configuration
+
+```yaotl
+Operators {
+    user "5pider" {
+        Password = "password1234"
+    }
+
+    user "Neo" {
+        Password = "password1234"
+    }
+}
+```
+
+### Parameters
+
+Each `user` block:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| Label | string | Yes | Username (in quotes after `user`) |
+| `Password` | string | Yes | Plain-text password (hashed with SHA3-256 during auth) |
+
+<Note>
+Passwords are stored in plain text in the profile but transmitted as SHA3-256 hashes during authentication.
+</Note>
+
+## Demon Block
+
+Configures default agent behavior and injection settings.
+
+### Basic Configuration
+
+```yaotl
+Demon {
+    Sleep = 2
+    Jitter = 15
+
+    TrustXForwardedFor = false
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\notepad.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\notepad.exe"
+    }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Sleep` | int | No | Default sleep time in seconds (default: 2) |
+| `Jitter` | int | No | Jitter percentage 0-100 (default: 15) |
+| `IndirectSyscall` | bool | No | Enable indirect syscalls (default: true) |
+| `StackDuplication` | bool | No | Duplicate stack during sleep (default: false) |
+| `SleepTechnique` | string | No | Sleep obfuscation: "Ekko", "Zilean", "FOLIAGE" |
+| `ProxyLoading` | string | No | DLL proxy loading technique |
+| `AmsiEtwPatching` | string | No | AMSI/ETW bypass method |
+| `TrustXForwardedFor` | bool | No | Trust X-Forwarded-For header (for redirectors) |
+| `Injection` | block | Yes | Process injection configuration |
+
+### Injection Block
+
+Defines processes to spawn for injection:
+
+```yaotl
+Injection {
+    Spawn64 = "C:\\Windows\\System32\\Werfault.exe"
+    Spawn32 = "C:\\Windows\\SysWOW64\\Werfault.exe"
+}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Spawn64` | string | No | Full path to x64 process for injection |
+| `Spawn32` | string | No | Full path to x86 process for injection |
+
+<Tip>
+Choose inconspicuous processes like `notepad.exe`, `Werfault.exe`, or `RuntimeBroker.exe` for injection targets.
+</Tip>
+
+### Binary Block (Advanced)
+
+Customize compiled binary properties:
+
+```yaotl
+Binary {
+    Header {
+        MagicMz-x64 = "MZ"
+        MagicMz-x86 = "MZ"
+        CompileTime = "2023-01-15 10:30:00"
+        ImageSize-x64 = 1024000
+        ImageSize-x86 = 512000
+    }
+
+    ReplaceStrings-x64 = {
+        "KERNEL32.DLL" = "KENNEL32.DLL"
+    }
+}
+```
+
+## Listeners Block
+
+Defines HTTP, HTTPS, SMB, and External C2 listeners.
+
+### HTTP/HTTPS Listener
+
+```yaotl
+Listeners {
+    Http {
+        Name         = "Primary HTTP"
+        Hosts        = [
+            "example.com",
+            "192.168.1.100",
+        ]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        KillDate     = "2024-12-31 23:59:59"
+        WorkingHours = "08:00-17:00"
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+        Uris = [
+            "/api/v1/updates",
+            "/api/v2/sync",
+        ]
+
+        Headers = [
+            "Accept: application/json",
+            "Accept-Encoding: gzip, deflate",
+        ]
+
+        Response {
+            Headers = [
+                "Content-Type: application/json",
+                "Server: nginx/1.18.0",
+            ]
+        }
+    }
+}
+```
+
+### HTTP Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Name` | string | Yes | Unique listener identifier |
+| `Hosts` | []string | Yes | List of callback domains/IPs (for agent rotation) |
+| `HostBind` | string | Yes | Interface to bind (0.0.0.0 for all) |
+| `HostRotation` | string | No | Host selection: "round-robin", "random" |
+| `PortBind` | int | Yes | Port to listen on |
+| `PortConn` | int | No | Port agents connect to (for port forwarding) |
+| `Secure` | bool | No | Enable HTTPS (default: false) |
+| `KillDate` | string | No | Date to stop listener (YYYY-MM-DD HH:MM:SS) |
+| `WorkingHours` | string | No | Active hours (HH:MM-HH:MM) |
+| `UserAgent` | string | No | Custom User-Agent string |
+| `Method` | string | No | HTTP method: "GET", "POST" (default: POST) |
+| `Uris` | []string | No | List of callback URIs (random selection) |
+| `Headers` | []string | No | Additional HTTP headers |
+| `Response` | block | No | Custom response headers |
+| `Cert` | block | No | Custom TLS certificate |
+
+### Teams Profile Example
+
+Mimic Microsoft Teams traffic:
+
+```yaotl
+Http {
+    Name         = "teams profile - http"
+    Hosts        = ["teams.microsoft.com"]
+    HostBind     = "0.0.0.0"
+    PortBind     = 443
+    PortConn     = 443
+    Secure       = true
+    UserAgent    = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+
+    Uris = ["/Collector/2.0/settings/"]
+
+    Headers = [
+        "Accept: json",
+        "Referer: https://teams.microsoft.com/_",
+        "x-ms-session-id: f73c3186-057a-d996-3b63-b6e5de6ef20c",
+        "x-ms-client-type: desktop",
+        "x-mx-client-version: 27/1.0.0.2021020410",
+    ]
+
+    Response {
+        Headers = [
+            "Content-Type: application/json; charset=utf-8",
+            "Server: Microsoft-HTTPAPI/2.0",
+            "x-ms-environment: North Europe-prod-3",
+        ]
+    }
+}
+```
+
+<Info>
+This profile makes agent traffic resemble legitimate Microsoft Teams communications, helping evade detection.
+</Info>
+
+### Custom TLS Certificate
+
+```yaotl
+Cert {
+    Cert = "/path/to/server.crt"
+    Key  = "/path/to/server.key"
+}
+```
+
+### SMB Listener
+
+For pivot/lateral movement via named pipes:
+
+```yaotl
+Smb {
+    Name     = "Pivot - SMB"
+    PipeName = "demon_pipe"
+    KillDate = "2024-12-31 23:59:59"
+}
+```
+
+### SMB Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Name` | string | Yes | Unique listener identifier |
+| `PipeName` | string | Yes | Named pipe for SMB communication |
+| `KillDate` | string | No | Date to stop listener |
+| `WorkingHours` | string | No | Active hours |
+
+<Note>
+SMB listeners are used for agent-to-agent communication in pivot scenarios, not for initial callbacks.
+</Note>
+
+### External C2 Listener
+
+For custom agent integrations:
+
+```yaotl
+External {
+    Name     = "Custom Agent"
+    Endpoint = "custom-endpoint"
+}
+```
+
+## Service Block
+
+Enables the Service API for custom agents (External C2).
+
+### Configuration
+
+```yaotl
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `Endpoint` | string | Yes | URL path for service endpoint |
+| `Password` | string | Yes | Authentication password for custom agents |
+
+### Usage
+
+Custom agents POST to:
+```
+https://teamserver:40056/{Endpoint}
+```
+
+With authentication:
+```
+Authorization: Bearer {Password}
+```
+
+<Tip>
+Use the Service API to integrate custom implants like Talon or your own agents.
+</Tip>
+
+## WebHook Block (Optional)
+
+Send notifications to Discord:
+
+```yaotl
+WebHook {
+    Discord {
+        Url       = "https://discord.com/api/webhooks/..."
+        AvatarUrl = "https://example.com/avatar.png"
+        User      = "Havoc Bot"
+    }
+}
+```
+
+## Complete Example
+
+Here's the default `havoc.yaotl` profile:
+
+```yaotl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+
+    Build {
+        Compiler64 = "data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+
+Operators {
+    user "5pider" {
+        Password = "password1234"
+    }
+
+    user "Neo" {
+        Password = "password1234"
+    }
+}
+
+# Optional: this enables the service API for custom agents
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+
+Demon {
+    Sleep = 2
+    Jitter = 15
+
+    TrustXForwardedFor = false
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\notepad.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\notepad.exe"
+    }
+}
+```
+
+## Advanced Example: HTTP + SMB
+
+From `http_smb.yaotl`:
+
+```yaotl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+
+    Build {
+        Compiler64 = "/usr/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "/usr/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+
+Operators {
+    user "5pider" {
+        Password = "password1234"
+    }
+
+    user "Neo" {
+        Password = "password1234"
+    }
+}
+
+Listeners {
+    Http {
+        Name         = "teams profile - http"
+        Hosts        = ["5pider.net"]
+        HostBind     = "0.0.0.0"
+        HostRotation = "round-robin"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = false
+        KillDate     = "2024-01-02 12:00:00"
+        UserAgent    = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+
+        Uris = ["/Collector/2.0/settings/"]
+
+        Headers = [
+            "Accept: json",
+            "Referer: https://teams.microsoft.com/_",
+            "x-ms-session-id: f73c3186-057a-d996-3b63-b6e5de6ef20c",
+            "x-ms-client-type: desktop",
+            "x-mx-client-version: 27/1.0.0.2021020410",
+            "Accept-Encoding: gzip, deflate, br",
+            "Origin: https://teams.microsoft.com"
+        ]
+
+        Response {
+            Headers = [
+                "Content-Type: application/json; charset=utf-8",
+                "Server: Microsoft-HTTPAPI/2.0",
+                "X-Content-Type-Options: nosniff",
+                "x-ms-environment: North Europe-prod-3,_cnsVMSS-6_26",
+                "x-ms-latency: 40018.2038",
+                "Access-Control-Allow-Origin: https://teams.microsoft.com",
+                "Access-Control-Allow-Credentials: true",
+                "Connection: keep-alive"
+            ]
+        }
+    }
+
+    Smb {
+        Name     = "Pivot - Smb"
+        PipeName = "demon_pipe"
+    }
+}
+
+Service {
+    Endpoint = "service-endpoint"
+    Password = "service-password"
+}
+
+Demon {
+    Sleep = 2
+    Jitter = 20
+
+    TrustXForwardedFor = false
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\Werfault.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\Werfault.exe"
+    }
+}
+```
+
+## Profile Validation
+
+The teamserver validates profiles on startup:
+
+```go
+// From profile.go
+func (p *Profile) SetProfile(path string, def bool) error {
+    err := yaotl.DecodeFile(path, nil, &p.Config)
+    if err != nil {
+        return err // Returns detailed parse errors
+    }
+    
+    logger.Info("Havoc profile:", path)
+    return nil
+}
+```
+
+**Common Errors**:
+- **Syntax errors**: Missing quotes, brackets, or commas
+- **Type errors**: Wrong data type (e.g., string instead of int)
+- **Required fields**: Missing mandatory parameters
+- **Invalid values**: Out-of-range values or unknown options
+
+<Tip>
+Test your profile with `--debug` flag to see detailed validation output.
+</Tip>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Security" icon="shield">
+    - Use strong operator passwords
+    - Change default passwords
+    - Set appropriate kill dates
+    - Use HTTPS for listeners
+    - Rotate profiles between ops
+  </Card>
+  <Card title="Operational" icon="gear">
+    - Document profile purpose
+    - Use descriptive listener names
+    - Set realistic sleep/jitter
+    - Configure working hours
+    - Test before deployment
+  </Card>
+  <Card title="Network" icon="network-wired">
+    - Match legitimate traffic patterns
+    - Use credible User-Agent strings
+    - Customize HTTP headers
+    - Configure appropriate URIs
+    - Consider using redirectors
+  </Card>
+  <Card title="Evasion" icon="eye-slash">
+    - Vary injection targets
+    - Customize binary properties
+    - Use sleep obfuscation
+    - Enable indirect syscalls
+    - Mimic known services (Teams, etc.)
+  </Card>
+</CardGroup>
+
+## Profile Library
+
+Havoc includes several example profiles:
+
+| Profile | Description |
+|---------|-------------|
+| `havoc.yaotl` | Basic profile with minimal configuration |
+| `http_smb.yaotl` | HTTP listener + SMB pivot support |
+| `webhook_example.yaotl` | Demonstrates Discord webhook integration |
+
+<Note>
+Create custom profiles for different operations, environments, or detection strategies. Store them in `profiles/` with descriptive names.
+</Note>

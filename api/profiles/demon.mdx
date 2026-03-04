@@ -1,0 +1,209 @@
+---
+title: 'Demon Profile'
+description: 'Configuration options for the Demon agent'
+---
+
+The `Demon` section configures default settings for the primary Havoc agent, including sleep intervals, process injection targets, and sleep obfuscation techniques.
+
+## Syntax
+
+```hcl
+Demon {
+    Sleep = 2
+    Jitter = 20
+
+    TrustXForwardedFor = false
+
+    Implant {
+        SleepMask = 1
+        SleepMaskTechnique = 0
+    }
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\notepad.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\notepad.exe"
+    }
+}
+```
+
+## Core Parameters
+
+<ParamField path="Sleep" type="integer" required>
+  The default interval (in seconds) for the agent to sleep between check-ins for commands.
+  
+  **Default:** `2`
+  
+  This can be modified at runtime using the `sleep` command in the agent session.
+</ParamField>
+
+<ParamField path="Jitter" type="integer" required>
+  The amount of randomness applied to sleep intervals, specified as a percentage (0-100).
+  
+  **Default:** `20` (20% jitter)
+  
+  Example: With `Sleep = 10` and `Jitter = 20`, the actual sleep time will be between 8-12 seconds.
+</ParamField>
+
+<ParamField path="TrustXForwardedFor" type="boolean" required>
+  If `true`, the agent's public IP will be set to the value of the `X-Forwarded-For` HTTP header.
+  
+  **Default:** `false`
+  
+  <Warning>
+    Only enable this if the teamserver is behind a redirector or reverse proxy. Otherwise, agents can spoof their IP addresses.
+  </Warning>
+</ParamField>
+
+## Implant Configuration
+
+The `Implant` section configures sleep obfuscation techniques to evade memory scanning during agent dormancy.
+
+<ParamField path="Implant.SleepMask" type="integer" required>
+  Enables sleep mask obfuscation when the agent is sleeping.
+  
+  - `0` - Disabled
+  - `1` - Enabled
+  
+  **Default:** `1` (enabled)
+  
+  <Note>
+    Sleep mask obfuscation only occurs when there are no active job threads running. Long-running jobs prevent sleep obfuscation.
+  </Note>
+</ParamField>
+
+<ParamField path="Implant.SleepMaskTechnique" type="integer" required>
+  Specifies which sleep mask technique to use for heap/stack encryption during sleep.
+  
+  - `0` - [WaitForSingleObjectEx](https://docs.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobjectex) (no obfuscation)
+  - `1` - [FOLIAGE](https://github.com/SecIdiot/FOLIAGE)
+  - `2` - [Ekko](https://github.com/Cracked5pider/Ekko)
+  
+  **Default:** `0`
+</ParamField>
+
+## Injection Configuration
+
+The `Injection` section defines which processes are spawned for fork & run operations (post-exploitation jobs that run in a separate process).
+
+<ParamField path="Injection.Spawn64" type="string" required>
+  Full path to the 64-bit process used for fork & run operations.
+  
+  **Default:** `"C:\\Windows\\System32\\notepad.exe"`
+  
+  Common alternatives:
+  - `"C:\\Windows\\System32\\Werfault.exe"` (Windows Error Reporting)
+  - `"C:\\Windows\\System32\\RuntimeBroker.exe"`
+  - `"C:\\Windows\\System32\\dllhost.exe"`
+</ParamField>
+
+<ParamField path="Injection.Spawn32" type="string" required>
+  Full path to the 32-bit process used for fork & run operations.
+  
+  **Default:** `"C:\\Windows\\SysWOW64\\notepad.exe"`
+  
+  Common alternatives:
+  - `"C:\\Windows\\SysWOW64\\Werfault.exe"`
+  - `"C:\\Windows\\SysWOW64\\RuntimeBroker.exe"`
+  - `"C:\\Windows\\SysWOW64\\dllhost.exe"`
+</ParamField>
+
+## Examples
+
+### Standard Configuration
+
+```hcl
+Demon {
+    Sleep = 2
+    Jitter = 20
+
+    TrustXForwardedFor = false
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\notepad.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\notepad.exe"
+    }
+}
+```
+
+### Stealthy Configuration with Sleep Obfuscation
+
+```hcl
+Demon {
+    Sleep = 10
+    Jitter = 30
+
+    TrustXForwardedFor = false
+
+    Implant {
+        SleepMask = 1
+        SleepMaskTechnique = 2  # Ekko technique
+    }
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\Werfault.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\Werfault.exe"
+    }
+}
+```
+
+### Behind a Redirector
+
+```hcl
+Demon {
+    Sleep = 5
+    Jitter = 15
+
+    TrustXForwardedFor = true  # Behind redirector
+
+    Implant {
+        SleepMask = 1
+        SleepMaskTechnique = 1  # FOLIAGE technique
+    }
+
+    Injection {
+        Spawn64 = "C:\\Windows\\System32\\RuntimeBroker.exe"
+        Spawn32 = "C:\\Windows\\SysWOW64\\RuntimeBroker.exe"
+    }
+}
+```
+
+## Runtime Modification
+
+Many Demon configuration options can be modified at runtime through the agent console:
+
+- **Sleep interval:** `sleep [seconds]`
+- **Injection targets:** `config injection spawn64 [path]` and `config injection spawn32 [path]`
+
+This allows operators to adjust agent behavior without regenerating payloads.
+
+## OPSEC Considerations
+
+<Warning>
+  **Sleep Obfuscation and Jobs**
+  
+  Sleep obfuscation only occurs when there are no active job threads running. Long-running jobs (like port scans or keyloggers) prevent sleep obfuscation from triggering, potentially making the agent more visible to memory scanning tools.
+</Warning>
+
+<Note>
+  **Choosing Spawn Processes**
+  
+  Select spawn processes that:
+  - Are commonly found running on target systems
+  - Match the expected environment (avoid notepad.exe on servers)
+  - Are signed by Microsoft
+  - Have appropriate parent process relationships
+</Note>
+
+## Sleep Mask Techniques
+
+### WaitForSingleObjectEx (0)
+
+No heap obfuscation - the agent simply sleeps without encrypting memory. Fastest but provides no evasion against memory scanners.
+
+### FOLIAGE (1)
+
+Uses timer queues to encrypt and decrypt the agent's heap during sleep. Based on the [FOLIAGE](https://github.com/SecIdiot/FOLIAGE) technique by SecIdiot.
+
+### Ekko (2)
+
+Uses CreateThreadpoolWait and CreateEvent to encrypt the agent's heap and mask the call stack during sleep. Based on the [Ekko](https://github.com/Cracked5pider/Ekko) technique by C5pider.

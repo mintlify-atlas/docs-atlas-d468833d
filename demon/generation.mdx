@@ -1,0 +1,312 @@
+---
+title: Generating Demon Payloads
+description: Create and configure Demon agent payloads using the Havoc client
+---
+
+## Overview
+
+Demon payloads are generated through the Havoc client UI. The generation process compiles the agent source code with your specified configuration options, producing a customized payload for your operation.
+
+## Accessing Payload Generation
+
+1. Connect to your Havoc teamserver using the client
+2. Navigate to **Attack → Payload** from the menu bar
+3. The Payload Generation window will open
+
+## Payload Formats
+
+Demon supports multiple output formats:
+
+<Tabs>
+  <Tab title="Windows EXE">
+    ### Portable Executable (EXE)
+    
+    A standalone Windows executable that can be run directly on the target system.
+    
+    **Use Cases:**
+    - Initial access via delivery mechanisms
+    - Execution through user interaction
+    - Service installation
+    
+    **Entry Points:**
+    - `MainExe.c` - Standard WinMain entry point
+    - `MainSvc.c` - Service control entry point
+    
+    <Note>
+      EXE payloads are larger than shellcode but easier to execute in many scenarios.
+    </Note>
+  </Tab>
+  
+  <Tab title="Windows DLL">
+    ### Dynamic Link Library (DLL)
+    
+    A Windows DLL that can be loaded via various techniques.
+    
+    **Use Cases:**
+    - DLL hijacking/proxying
+    - Reflective DLL injection
+    - COM object hijacking
+    - AppInit_DLLs persistence
+    
+    **Entry Point:**
+    - `MainDll.c` - DllMain entry point
+    
+    **Export Options:**
+    The DLL can be configured with custom exports for specific loading scenarios.
+  </Tab>
+  
+  <Tab title="Shellcode">
+    ### Raw Shellcode (BIN)
+    
+    Position-independent shellcode suitable for injection techniques.
+    
+    **Use Cases:**
+    - Process injection
+    - Exploitation payloads
+    - Memory-only execution
+    - Custom loaders
+    
+    **Features:**
+    - Includes reflective loader (KaynLdr)
+    - Position-independent code
+    - No disk artifacts
+    
+    <Warning>
+      Shellcode format requires in-memory execution and cannot be run directly as a file.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Configuration Options
+
+### Listener Selection
+
+<Steps>
+  <Step title="Select Active Listener">
+    Choose from your configured HTTP/HTTPS or SMB listeners.
+    
+    The payload will be compiled with the listener's configuration:
+    - Host addresses
+    - Port numbers
+    - HTTP method and URIs
+    - User-Agent string
+    - Custom headers
+    - Proxy settings
+  </Step>
+</Steps>
+
+### Architecture
+
+<Accordion title="x64 (64-bit)">
+  **Recommended for modern Windows systems**
+  
+  - Full feature support
+  - Sleep obfuscation techniques available
+  - Return address spoofing
+  - Hardware breakpoint engine
+  
+  Compatible with:
+  - Windows 10/11 (64-bit)
+  - Windows Server 2016/2019/2022
+</Accordion>
+
+<Accordion title="x86 (32-bit)">
+  **For legacy systems or specific scenarios**
+  
+  - Limited sleep obfuscation support
+  - No return address spoofing
+  - Compatible with WoW64
+  
+  Compatible with:
+  - 32-bit Windows systems
+  - WoW64 processes on 64-bit Windows
+</Accordion>
+
+### Implant Configuration
+
+#### Sleep Settings
+
+```yaml
+Sleep Interval: 2 seconds
+Jitter: 20%
+```
+
+- **Sleep Interval**: Time between check-ins (in seconds)
+- **Jitter**: Random variation applied to sleep time (percentage)
+  - Example: 2s sleep with 20% jitter = 1.6s to 2.4s actual sleep
+
+#### Sleep Obfuscation Technique
+
+<CardGroup cols={3}>
+  <Card title="WaitForSingleObjectEx" icon="bed">
+    **No obfuscation** - Standard Windows sleep function. Fastest but most detectable.
+  </Card>
+  <Card title="Ekko" icon="clock-rotate-left">
+    Timer-based sleep obfuscation using `RtlCreateTimer` to encrypt memory during sleep.
+  </Card>
+  <Card title="Zilean" icon="hourglass">
+    Wait-based sleep obfuscation using `RtlRegisterWait` with memory encryption.
+  </Card>
+  <Card title="FOLIAGE" icon="leaf">
+    APC-based sleep obfuscation using fiber execution for advanced memory protection.
+  </Card>
+</CardGroup>
+
+<Note>
+  See [Sleep Obfuscation](/demon/sleep-obfuscation) for detailed information on each technique.
+</Note>
+
+#### Advanced Options
+
+**Indirect Syscalls**
+- ✅ Enable for maximum evasion
+- ❌ Disable to use standard Win32 APIs (faster, more detectable)
+
+**Stack Spoofing**
+- Enable return address stack spoofing on x64
+- Makes call stacks appear legitimate during memory inspection
+
+**Proxy Loading**
+- Specifies which Windows API to abuse for proxy loading DLLs
+- Options: RtlRegisterWait, RtlCreateTimer, RtlQueueWorkItem
+
+**AMSI/ETW Patching**
+- `None`: No patching
+- `Hardware Breakpoints`: Use VEH + HWBP for stealthy patching
+- `Memory Patching`: Direct memory modification (more detectable)
+
+### Injection Configuration
+
+#### Spawn Processes
+
+Configure sacrificial processes for fork-and-run operations:
+
+```
+Spawn x64: C:\Windows\System32\notepad.exe
+Spawn x86: C:\Windows\SysWOW64\notepad.exe
+```
+
+<Tip>
+  Choose processes that are legitimate for your target environment. Common choices:
+  - `notepad.exe` (GUI)
+  - `dllhost.exe` (Service)
+  - `werfault.exe` (System)
+  - `RuntimeBroker.exe` (Windows 10+)
+</Tip>
+
+#### Injection Technique
+
+- **Syscall**: Use indirect syscalls for injection operations (stealthy)
+- **Win32**: Use standard CreateRemoteThread (faster, more detectable)
+- **APC**: Queue APCs to existing threads (requires target process analysis)
+
+### Operational Controls
+
+<Accordion title="Kill Date">
+  Set a date/time when the Demon will automatically terminate itself.
+  
+  Format: `YYYY-MM-DD HH:MM:SS` (UTC)
+  
+  Example: `2024-12-31 23:59:59`
+  
+  <Warning>
+    Once the kill date is reached, the agent will exit and cannot be recovered.
+  </Warning>
+</Accordion>
+
+<Accordion title="Working Hours">
+  Define hours during which the Demon will check in with the teamserver.
+  
+  Format: `HH:MM-HH:MM` (24-hour format)
+  
+  Example: `08:00-17:00` (8 AM to 5 PM)
+  
+  Outside working hours, the agent will sleep until the next working period begins.
+</Accordion>
+
+## Build Process
+
+When you click **Generate**, the Havoc teamserver:
+
+<Steps>
+  <Step title="Configuration Assembly">
+    Assembles your configuration options into compiler flags and definitions.
+  </Step>
+  
+  <Step title="Source Compilation">
+    Compiles the Demon source code using MinGW-w64:
+    - C source files compiled with specified flags
+    - Assembly files (syscalls, stack spoofing) assembled with NASM
+    - Linker combines all object files
+  </Step>
+  
+  <Step title="Post-Processing">
+    - Strips debug symbols
+    - Applies obfuscation (if configured)
+    - Packages with reflective loader (for shellcode)
+  </Step>
+  
+  <Step title="Delivery">
+    The compiled payload is sent to the client and you're prompted to save it.
+  </Step>
+</Steps>
+
+<Note>
+  Compilation typically takes 5-15 seconds depending on teamserver resources and configuration complexity.
+</Note>
+
+## Troubleshooting
+
+### Compilation Errors
+
+<Accordion title="Couldn't compile implant: exit status 1">
+  **Cause**: MinGW-w64 or NASM not properly installed on teamserver
+  
+  **Solution**:
+  ```bash
+  sudo apt install mingw-w64 nasm
+  ```
+  
+  Verify installation:
+  ```bash
+  x86_64-w64-mingw32-gcc --version
+  nasm --version
+  ```
+</Accordion>
+
+<Accordion title="Missing dependencies">
+  **Cause**: Required build tools not in PATH
+  
+  **Solution**: Ensure teamserver has all build dependencies:
+  - MinGW-w64 (x86_64-w64-mingw32-gcc)
+  - NASM (Netwide Assembler)
+  - Make utilities
+</Accordion>
+
+### Payload Issues
+
+<Warning>
+  **AV/EDR Detection**: If your payload is immediately detected:
+  
+  1. Enable indirect syscalls
+  2. Use hardware breakpoint AMSI/ETW patching
+  3. Choose appropriate sleep obfuscation
+  4. Consider custom obfuscation of the Demon source
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Learn how to deploy and interact with your Demon payload
+  </Card>
+  <Card title="Configure Features" icon="sliders" href="/demon/features">
+    Explore Demon's advanced capabilities
+  </Card>
+  <Card title="Injection Techniques" icon="syringe" href="/demon/injection">
+    Understand injection methods and OPSEC considerations
+  </Card>
+  <Card title="Command Reference" icon="book" href="/demon/commands">
+    Master Demon's command set
+  </Card>
+</CardGroup>

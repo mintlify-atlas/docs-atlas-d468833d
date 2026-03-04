@@ -1,0 +1,423 @@
+---
+title: Client
+description: Understanding Havoc's Qt-based operator client
+---
+
+# Client
+
+The Havoc client is a cross-platform graphical user interface built with C++ and Qt. It provides operators with a modern, intuitive interface for managing agents, executing commands, and collaborating with team members.
+
+## Overview
+
+The client connects to the teamserver via WebSocket and supports multiple operators working simultaneously on the same engagement.
+
+<CardGroup cols={2}>
+  <Card title="Cross-Platform" icon="desktop">
+    Runs on Linux, macOS, and Windows
+  </Card>
+  <Card title="Modern UI" icon="palette">
+    Dark theme based on Dracula color scheme
+  </Card>
+  <Card title="Multiplayer" icon="users">
+    Multiple operators share session state
+  </Card>
+  <Card title="Extensible" icon="puzzle-piece">
+    Python API for custom scripts and automation
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### User Interface
+
+The client provides a comprehensive interface with several key components:
+
+**Main Window** (`Havoc.hpp`):
+```cpp
+class HavocSpace::Havoc {
+    UserInterface::HavocUi HavocAppUI;
+    DBManager* dbManager;
+    QMainWindow* HavocMainWindow;
+    bool ClientInitConnect = true;
+    
+    void Init(int argc, char** argv);
+    void Start();
+};
+```
+
+**Core UI Elements**:
+- **Session Table**: View all active and historical agents
+- **Session Console**: Interact with individual agents
+- **Listener Manager**: Create and manage listeners
+- **Payload Generator**: Build custom Demon payloads
+- **Team Chat**: Communicate with other operators
+- **Loot Browser**: View downloaded files and credentials
+- **Event Log**: Monitor all framework events
+- **Script Manager**: Load and manage Python scripts
+
+<Info>
+The client uses Monaco font (embedded in Qt resources) for proper monospace formatting. On Kali Linux, you may need to manually configure fonts if the embedded resource fails to load.
+</Info>
+
+### Connecting to Teamserver
+
+The client connects via WebSocket Secure (WSS):
+
+1. **Launch the client**:
+```bash
+./Havoc
+```
+
+2. **Connection Dialog**:
+- **Host**: Teamserver IP or hostname
+- **Port**: Teamserver port (default: 40056)
+- **Username**: Operator name from YAOTL profile
+- **Password**: Operator password from YAOTL profile
+
+3. **Authentication Flow**:
+```
+Client                           Teamserver
+  |                                  |
+  |---> Connect to wss://host:port--|  
+  |                                  |
+  |<----- TLS Handshake ------------|
+  |                                  |
+  |---> Auth Package --------------->|
+  |     (username + SHA3-256(pw))    |
+  |                                  |
+  |<----- Auth Success + State ------|
+  |     (agents, listeners, events)  |
+```
+
+<Note>
+The password is hashed with SHA3-256 before transmission. The teamserver validates this hash against the YAOTL profile.
+</Note>
+
+### Session Management
+
+The client maintains synchronized state with the teamserver:
+
+**TeamserverTabSession** (`TeamserverTabSession.h`):
+- Manages connection to a single teamserver
+- Handles WebSocket message parsing
+- Dispatches events to appropriate UI widgets
+- Maintains local cache of session state
+
+**Session Views**:
+- **Table View**: Overview of all agents with filtering
+- **Graph View**: Visual representation of pivot chains
+- **Console View**: Interactive terminal for agent commands
+
+### Agent Interaction
+
+**DemonInteracted** widget (`DemonInteracted.h`):
+- Dedicated console for each agent session
+- Command history and auto-completion
+- Output formatting (ANSI colors, tables)
+- Task management (view pending/completed tasks)
+
+**Command Dispatch** (`DemonCmdDispatch.h`):
+```cpp
+class DemonCmdDispatch {
+    // Parses operator input and builds command packages
+    void DispatchCommand(QString command, QStringList args);
+    
+    // Sends package to teamserver via WebSocket
+    void SendPackage(Package pkg);
+};
+```
+
+<Tip>
+Type `help` in any agent console to see available commands. Use Tab for auto-completion.
+</Tip>
+
+### Payload Generation
+
+The client provides a GUI for building Demon payloads:
+
+**Configuration Options**:
+- **Listener**: Select target listener
+- **Architecture**: x64 or x86
+- **Format**: EXE, DLL, or shellcode
+- **Sleep/Jitter**: Override profile defaults
+- **Indirect Syscalls**: Enable/disable
+- **Stack Duplication**: Enable/disable
+- **Sleep Obfuscation**: Ekko, Zilean, or FOLIAGE
+- **Injection Config**: Process spawn targets
+
+**Binary Options**:
+- Custom compile time
+- MZ header modification
+- Image size spoofing
+- String replacement
+
+The client sends the configuration to the teamserver, which compiles and returns the payload.
+
+### Listener Management
+
+Create and manage listeners through the GUI:
+
+**HTTP/HTTPS Listener**:
+- **Name**: Unique identifier
+- **Hosts**: Callback domains/IPs
+- **Host Bind**: Interface to bind (0.0.0.0 for all)
+- **Port Bind**: Listener port on server
+- **Port Conn**: Port agents connect to
+- **User Agent**: Custom UA string
+- **Headers**: Additional HTTP headers
+- **URIs**: Callback paths
+- **Secure**: Enable HTTPS
+- **Cert/Key**: Custom TLS certificate (optional)
+
+**SMB Listener**:
+- **Name**: Unique identifier
+- **Pipe Name**: Named pipe for SMB callbacks
+
+**External C2**:
+- **Name**: Unique identifier
+- **Endpoint**: Custom endpoint path
+
+### Loot Management
+
+**LootWidget** (`LootWidget.h`):
+- View downloaded files
+- Extract credentials and secrets
+- Export data in various formats
+- Filter by agent, date, or type
+
+**Loot Categories**:
+- Downloads
+- Screenshots
+- Credentials
+- Hashes
+- Tickets (Kerberos)
+- Process dumps
+
+### Team Collaboration
+
+**Chat System**:
+- Real-time messaging between operators
+- Join/leave notifications
+- Persistent chat history
+
+**Event Synchronization**:
+- All operators see agent callbacks
+- Commands issued by one operator visible to all
+- Shared session state (agents, listeners, loot)
+
+**User Management**:
+- See who's connected
+- Track command attribution
+- Coordinate tasks between operators
+
+<Info>
+Each operator action is logged with username and timestamp for accountability and collaboration.
+</Info>
+
+## Python API Integration
+
+The client embeds Python 3.10 for extensibility:
+
+**PythonApi** (`PythonApi/PythonApi.h`):
+```cpp
+class PythonApi {
+    // Initialize Python interpreter
+    void InitPythonInterpreter();
+    
+    // Load and execute scripts
+    void ExecuteScript(QString path);
+    
+    // Event handlers
+    void RegisterEventHandler(QString event, PyObject* callback);
+};
+```
+
+**Event System** (`PythonApi/Event.h`):
+- `onNewDemon`: New agent registered
+- `onDemonOutput`: Agent sent output
+- `onDemonMark`: Agent marked (dead/active)
+- `onNewListener`: Listener created
+- `onListenerError`: Listener error
+
+**HavocUi API** (`PythonApi/HavocUi.h`):
+- Create custom dialogs
+- Add menu items
+- Display notifications
+- Modify UI elements
+
+**PyDemonClass** (`PythonApi/PyDemonClass.h`):
+- Access agent properties
+- Issue commands programmatically
+- Query agent state
+
+### Script Manager
+
+**ScriptManager** widget (`ScriptManager.h`):
+- Load scripts from disk
+- View loaded scripts
+- Enable/disable scripts
+- Reload scripts without restarting
+
+**Example Script Locations**:
+- User scripts: `~/.havoc/scripts/`
+- System scripts: `/usr/share/havoc/scripts/`
+
+<Tip>
+Use the Python API to automate repetitive tasks, create custom commands, or integrate with external tools.
+</Tip>
+
+## Configuration
+
+The client stores configuration in TOML format:
+
+**config.toml** (from `client/config.toml`):
+```toml
+[Havoc]
+version = "0.7"
+
+[Teamserver]
+default_profile = "havoc.yaotl"
+
+[UI]
+theme = "dracula"
+font = "Monaco"
+font_size = 10
+```
+
+**Saved Sessions**:
+- Recent teamserver connections
+- Saved credentials (optional)
+- Window layout preferences
+- Script configurations
+
+## Database Management
+
+The client uses a local database for caching:
+
+**DBManager** (`DBManager/DBManager.hpp`):
+- Caches teamserver data locally
+- Stores session history
+- Maintains script state
+- Saves UI preferences
+
+**Benefits**:
+- Faster UI updates
+- Offline session review
+- Persistent preferences
+- Reduced teamserver queries
+
+## Building the Client
+
+### Prerequisites
+
+**Debian/Ubuntu**:
+```bash
+sudo apt install -y qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
+    libqt5websockets5 libqt5websockets5-dev qtdeclarative5-dev \
+    python3.10-dev libspdlog-dev libboost-all-dev cmake build-essential
+```
+
+**Arch Linux**:
+```bash
+sudo pacman -S qt5-base qt5-websockets python3 spdlog boost cmake gcc
+```
+
+### Compilation
+
+```bash
+cd client
+make
+```
+
+This generates:
+- `Havoc` executable
+- Embedded Qt resources
+- Python module bindings
+
+<Note>
+The client requires Python 3.10 specifically. Ensure `python3.10-dev` is installed.
+</Note>
+
+## Starting the Client
+
+### Standalone
+
+```bash
+./client/Havoc
+```
+
+### Via Teamserver Binary
+
+```bash
+./teamserver client
+```
+
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `--profile <path>` | Auto-connect using profile |
+| `--no-connect` | Launch without connection dialog |
+
+## Troubleshooting
+
+### Font Issues (Kali Linux)
+
+If Monaco font doesn't load:
+
+1. Install a monospace font:
+```bash
+sudo apt install fonts-firacode
+```
+
+2. Modify `config.toml`:
+```toml
+[UI]
+font = "Fira Code"
+```
+
+### Connection Errors
+
+- **Certificate verification failed**: Teamserver using self-signed cert (expected)
+- **Connection refused**: Check teamserver is running and port is correct
+- **Authentication failed**: Verify username/password match YAOTL profile
+
+### Performance Issues
+
+- Disable verbose output on high-traffic operations
+- Clear old sessions from database
+- Reduce agent callback frequency (sleep/jitter)
+- Close unused agent consoles
+
+<Tip>
+For large engagements, use the graph view to visualize pivot chains and identify bottlenecks.
+</Tip>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Session Management" icon="folder">
+    - Name sessions descriptively
+    - Close consoles when not in use
+    - Archive completed engagements
+    - Back up important loot
+  </Card>
+  <Card title="Collaboration" icon="users">
+    - Use chat for coordination
+    - Review command history
+    - Mark agents appropriately
+    - Document findings in loot notes
+  </Card>
+  <Card title="Automation" icon="robot">
+    - Use Python scripts for repetitive tasks
+    - Create custom commands
+    - Automate loot extraction
+    - Integrate with ticketing systems
+  </Card>
+  <Card title="Security" icon="lock">
+    - Don't save passwords in config
+    - Use encrypted connections only
+    - Clear cache after engagements
+    - Protect client machine
+  </Card>
+</CardGroup>

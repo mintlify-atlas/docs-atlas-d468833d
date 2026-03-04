@@ -1,0 +1,164 @@
+---
+title: sleep
+description: Configure the Demon agent's callback interval and jitter settings
+---
+
+## Overview
+
+The `sleep` command controls the Demon agent's callback behavior by setting the delay between checkins and applying randomized jitter to avoid predictable network patterns.
+
+When sleep is active and no jobs are running, the agent applies sleep obfuscation techniques (if enabled in the configuration) to evade memory analysis.
+
+## Syntax
+
+```bash
+sleep [delay] [jitter]
+```
+
+## Parameters
+
+<ParamField path="delay" type="integer" required>
+  Sleep interval in seconds between agent callbacks to the teamserver
+  
+  - Minimum: 0 (interactive mode - immediate callbacks)
+  - Recommended: 60-300 for operational security
+  - Higher values reduce network visibility but slow command execution
+</ParamField>
+
+<ParamField path="jitter" type="integer" default="0">
+  Randomization percentage applied to the sleep delay
+  
+  - Range: 0-100
+  - Adds randomness to callback timing to avoid pattern detection
+  - Example: delay=60, jitter=20 results in callbacks every 48-72 seconds
+</ParamField>
+
+## Return Values
+
+<ResponseField name="status" type="string">
+  Confirmation that sleep settings have been updated
+</ResponseField>
+
+<ResponseField name="effective_delay" type="integer">
+  The actual sleep delay that will be applied (delay ± jitter calculation)
+</ResponseField>
+
+## Sleep Obfuscation
+
+When the agent sleeps and no job threads are running, Demon can apply sleep masking techniques to obfuscate its memory:
+
+<Tabs>
+  <Tab title="WaitForSingleObjectEx">
+    **Technique ID**: 0
+    
+    Uses the standard Windows API `WaitForSingleObjectEx` with no memory obfuscation. This is the most stable option but provides no evasion against memory scanning.
+    
+    - **OPSEC**: Low evasion capability
+    - **Stability**: Highest
+    - **Use Case**: Development and testing environments
+  </Tab>
+  
+  <Tab title="FOLIAGE">
+    **Technique ID**: 1
+    
+    Implements the [FOLIAGE](https://github.com/SecIdiot/FOLIAGE) sleep obfuscation technique which encrypts the agent's heap and stack before sleeping.
+    
+    - **OPSEC**: Medium evasion capability
+    - **Stability**: High
+    - **Use Case**: Evading basic memory scanners
+  </Tab>
+  
+  <Tab title="Ekko">
+    **Technique ID**: 2
+    
+    Implements the [Ekko](https://github.com/Cracked5pider/Ekko) sleep obfuscation technique using timers and encryption.
+    
+    - **OPSEC**: High evasion capability
+    - **Stability**: Medium
+    - **Use Case**: Advanced evasion scenarios
+  </Tab>
+</Tabs>
+
+## Examples
+
+### Set 60 Second Sleep with 20% Jitter
+
+```bash
+sleep 60 20
+```
+
+This configuration will cause the agent to callback every 48-72 seconds (60 ± 20%).
+
+### Interactive Mode
+
+```bash
+sleep 0
+```
+
+Setting sleep to 0 puts the agent in interactive mode with immediate callbacks. Useful when:
+- Running SOCKS proxies
+- Executing long-running jobs
+- Debugging or troubleshooting
+
+### Stealth Configuration
+
+```bash
+sleep 300 30
+```
+
+Callbacks every 210-390 seconds (3.5-6.5 minutes) for low-and-slow operations.
+
+### Standard Operational Sleep
+
+```bash
+sleep 120 15
+```
+
+Callbacks every 102-138 seconds with moderate jitter for balanced operations.
+
+## OPSEC Considerations
+
+<Warning>
+  Sleep obfuscation only works when NO job threads are running. Long-running jobs prevent sleep obfuscation from occurring.
+</Warning>
+
+- **Job Threads**: Commands that spawn threads (BOFs, SOCKS proxies, port forwards) will prevent sleep obfuscation
+- **Pattern Analysis**: Always use jitter to avoid predictable callback patterns
+- **Network Monitoring**: Lower sleep values generate more network traffic and increase detection risk
+- **Return Address Spoofing**: x64 Demons implement return address spoofing during sleep to hide the real return address on the stack
+
+## Configuration
+
+Sleep obfuscation technique can be configured in the teamserver profile:
+
+```hcl
+Demon {
+    Sleep   = 60
+    Jitter  = 20
+    
+    Implant {
+        SleepMask = 1  # Enable sleep masking
+        SleepMaskTechnique = 2  # 0=WaitForSingleObjectEx, 1=FOLIAGE, 2=Ekko
+    }
+}
+```
+
+Or modified at runtime using the `config` command:
+
+```bash
+config implant.sleep-obf.technique 2
+```
+
+## Use Cases
+
+- **Reduce Detection**: Longer sleep intervals with jitter reduce network visibility
+- **Interactive Sessions**: Set to 0 for real-time command execution
+- **SOCKS Proxy Operations**: Use `sleep 0` to maintain responsive proxy performance
+- **Long-Term Access**: High sleep values (300-600s) for persistent, low-visibility access
+
+## Notes
+
+- Sleep settings persist until changed or the agent exits
+- Changes take effect after the current sleep cycle completes
+- Sleep jitter is calculated randomly for each callback
+- The `checkin` command can be used to verify current sleep configuration

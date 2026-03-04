@@ -1,0 +1,355 @@
+---
+title: SMB Listeners
+description: Configure SMB named pipe listeners for lateral movement and peer-to-peer agent communication
+---
+
+SMB listeners enable peer-to-peer communication between Havoc agents using Windows named pipes. They are essential for lateral movement scenarios and establishing parent-child agent relationships within internal networks.
+
+## Overview
+
+Unlike HTTP/HTTPS listeners that communicate directly with the teamserver, SMB listeners facilitate communication between agents. A parent agent with teamserver connectivity can relay commands to child agents connected via SMB, allowing you to:
+
+- Pivot through compromised systems
+- Communicate with agents that cannot directly reach the teamserver
+- Operate in environments with strict egress filtering
+- Establish covert channels within internal networks
+
+## Basic Configuration
+
+SMB listeners are defined in the `Listeners` block of your profile:
+
+```hcl
+Listeners {
+    Smb {
+        Name     = "Pivot Listener"
+        PipeName = "msagent_pipe"
+    }
+}
+```
+
+## Configuration Options
+
+<ParamField path="Name" type="string" required>
+  Unique identifier for the SMB listener. This name is displayed in the Havoc client and used to reference the listener.
+  
+  ```hcl
+  Name = "Internal Pivot"
+  ```
+</ParamField>
+
+<ParamField path="PipeName" type="string" required>
+  The name of the Windows named pipe used for communication. Choose names that blend in with legitimate Windows services.
+  
+  <Note>
+    Common Windows named pipes include `ntsvcs`, `msagent_*`, `MSSE-*`, and `status_*`. Use similar naming conventions for operational security.
+  </Note>
+  
+  ```hcl
+  PipeName = "msagent_pipe"
+  PipeName = "MSSE-1337-server"
+  PipeName = "status_update"
+  ```
+</ParamField>
+
+### Operational Security
+
+<ParamField path="KillDate" type="string" optional>
+  Automatically terminate agent operations after the specified date and time. Format: `YYYY-MM-DD HH:MM:SS`
+  
+  ```hcl
+  KillDate = "2024-12-31 23:59:59"
+  ```
+</ParamField>
+
+<ParamField path="WorkingHours" type="string" optional>
+  Restrict agent callbacks to specific hours. Format: `HH:MM-HH:MM` (24-hour format)
+  
+  ```hcl
+  WorkingHours = "08:00-17:00"  # Business hours only
+  ```
+</ParamField>
+
+## Configuration Examples
+
+### Basic SMB Listener
+
+```hcl
+Listeners {
+    Smb {
+        Name     = "SMB Pivot"
+        PipeName = "demon_pipe"
+    }
+}
+```
+
+### Multiple SMB Listeners
+
+You can configure multiple SMB listeners with different pipe names for operational flexibility:
+
+```hcl
+Listeners {
+    Smb {
+        Name     = "Primary Pivot"
+        PipeName = "msagent_primary"
+    }
+    
+    Smb {
+        Name     = "Secondary Pivot"
+        PipeName = "msagent_backup"
+    }
+}
+```
+
+### SMB with Operational Security Controls
+
+```hcl
+Listeners {
+    Smb {
+        Name         = "Time-Limited Pivot"
+        PipeName     = "MSSE-1337-server"
+        KillDate     = "2024-06-30 23:59:59"
+        WorkingHours = "09:00-17:00"
+    }
+}
+```
+
+### Combined HTTP and SMB Setup
+
+Typical operational setup with both HTTP and SMB listeners:
+
+```hcl
+Listeners {
+    Http {
+        Name         = "External C2"
+        Hosts        = ["c2.example.com"]
+        HostBind     = "0.0.0.0"
+        PortBind     = 443
+        PortConn     = 443
+        Secure       = true
+        UserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        
+        Uris = [
+            "/api/v1/updates"
+        ]
+    }
+    
+    Smb {
+        Name     = "Internal Pivot"
+        PipeName = "demon_pipe"
+    }
+}
+```
+
+## How SMB Listeners Work
+
+### Parent-Child Relationship
+
+When you deploy an agent with SMB connectivity:
+
+1. **Parent Agent**: An existing agent with HTTP/HTTPS teamserver connectivity
+2. **Child Agent**: A newly deployed agent configured to use the SMB listener
+3. **Named Pipe**: The parent creates a named pipe that the child connects to
+4. **Relay**: The parent relays commands from the teamserver to the child and returns results
+
+```
+[Teamserver] <--HTTPS--> [Parent Agent] <--Named Pipe--> [Child Agent]
+                         (Web Server)                    (Internal Host)
+```
+
+### Connection Flow
+
+1. Parent agent receives instructions to start SMB listener
+2. Parent creates named pipe with the configured `PipeName`
+3. Child agent (deployed via lateral movement) connects to parent's named pipe
+4. Bidirectional communication established through the pipe
+5. Parent relays all teamserver communications to/from child
+
+## Use Cases
+
+### Lateral Movement
+
+SMB listeners are ideal for lateral movement scenarios:
+
+```
+Internet → [Teamserver] → HTTP Listener → [DMZ Server]
+                                              ↓ SMB
+                                         [Internal Workstation]
+                                              ↓ SMB  
+                                         [Domain Controller]
+```
+
+### Egress Filtering Bypass
+
+When internal hosts cannot reach the internet:
+
+- Deploy initial agent on an edge system with internet access (parent)
+- Use SMB listener for communication with internal systems (children)
+- Children communicate through parent without direct internet access
+
+### Segmented Network Pivoting
+
+Navigate network segmentation:
+
+```
+[Teamserver] ← HTTP → [Gateway Host]
+                           ↓ SMB
+                      [Segment A Host] ← SMB → [Segment B Host]
+```
+
+## Operational Workflow
+
+### 1. Configure SMB Listener in Profile
+
+Add SMB listener to your `.yaotl` profile:
+
+```hcl
+Listeners {
+    Smb {
+        Name     = "Lateral Movement"
+        PipeName = "msagent_pipe"
+    }
+}
+```
+
+### 2. Deploy Parent Agent
+
+Deploy an initial agent with HTTP/HTTPS connectivity to the teamserver. This agent will act as the parent.
+
+### 3. Start SMB Server on Parent
+
+From the Havoc client, instruct the parent agent to start an SMB server:
+
+```
+demon> connect --smb <listener_name> <pipe_name>
+```
+
+The parent agent now listens for child connections on the named pipe.
+
+### 4. Deploy Child Agent
+
+Generate and deploy a child payload configured to connect via SMB:
+
+- Select the SMB listener when generating the payload
+- Specify the parent agent's hostname/IP
+- Deploy using your preferred lateral movement technique
+
+### 5. Child Connects
+
+The child agent connects to the parent's named pipe and registers with the teamserver through the parent relay.
+
+## Security Considerations
+
+### Named Pipe Selection
+
+<Warning>
+  Choose pipe names carefully. Avoid obviously malicious names like `evil_pipe` or `backdoor`. Use names that blend in with legitimate Windows services.
+</Warning>
+
+Legitimate Windows pipe name patterns:
+- `ntsvcs`
+- `msagent_*`
+- `MSSE-*-server`
+- `status_*`
+- `PSHost.*`
+- `Winsock2\CatalogChangeListener-*`
+
+### Network Detection
+
+SMB listener traffic:
+- Travels over SMB protocol (TCP 445 or 139)
+- Appears as named pipe communication
+- May trigger alerts if EDR monitors pipe creation
+- Consider frequency and volume of traffic
+
+### Access Controls
+
+Named pipes inherit security contexts:
+- Parent agent's user context determines pipe permissions
+- Child must have appropriate access to connect
+- Consider domain trust relationships
+- Elevated privileges may be required
+
+## Troubleshooting
+
+### Child Agent Won't Connect
+
+**Check SMB connectivity:**
+```powershell
+Test-NetConnection -ComputerName <parent_host> -Port 445
+```
+
+**Verify pipe exists:**
+```powershell
+Get-ChildItem \\<parent_host>\pipe\
+```
+
+**Common issues:**
+- SMB ports (445, 139) blocked by firewall
+- Parent agent not running or SMB server not started
+- Incorrect pipe name configuration
+- Insufficient permissions to access named pipe
+- SMB signing requirements in domain environment
+
+### Connection Drops
+
+- Parent agent terminated or lost teamserver connection
+- Network instability between parent and child
+- Antivirus/EDR detected and killed process
+- Session timeout due to inactivity
+
+### Performance Issues
+
+- Multiple hops create latency (teamserver → parent → child)
+- Large file transfers slow over named pipes
+- Consider using HTTP listener if direct connectivity is possible
+- Limit number of children per parent to avoid bottlenecks
+
+## Best Practices
+
+1. **Use Descriptive Names**: Choose listener names that describe their purpose (e.g., "DMZ Pivot", "Finance Subnet")
+
+2. **Blend In**: Select pipe names that mimic legitimate Windows services
+
+3. **Limit Depth**: Avoid deep parent-child chains (e.g., parent → child → grandchild → great-grandchild)
+
+4. **Monitor Health**: Regularly check parent agent connectivity to prevent orphaned children
+
+5. **Document Relationships**: Track which agents are parents/children for operational awareness
+
+6. **Combine with HTTP**: Use HTTP for initial access and SMB for lateral expansion
+
+7. **Test Connectivity**: Verify SMB port accessibility before deploying child agents
+
+8. **Set Time Limits**: Use `KillDate` and `WorkingHours` to automatically manage operational windows
+
+## Advanced Scenarios
+
+### Multi-Level Pivoting
+
+```
+[Teamserver]
+      ↓ HTTPS
+   [Edge Host]
+      ↓ SMB  
+  [Internal A]
+      ↓ SMB
+  [Internal B]
+```
+
+Each level can have its own SMB listener with different pipe names for operational flexibility.
+
+### Redundant Paths
+
+Create multiple connection paths for resilience:
+
+```
+        [Teamserver]
+           ↓ HTTPS
+        [Parent]
+         ↙    ↘ SMB
+  [Child A]  [Child B]
+         ↘    ↙ SMB
+        [Target]
+```
+
+If one parent fails, the target maintains connectivity through the alternate path.

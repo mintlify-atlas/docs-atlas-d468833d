@@ -1,0 +1,618 @@
+---
+title: Modules
+description: Extend Demon agent capabilities with loadable modules
+---
+
+Havoc's module system allows you to extend the Demon agent's functionality without modifying the core codebase. Modules are loaded dynamically from the Havoc client and can add new commands, techniques, and capabilities.
+
+## Overview
+
+Modules enable:
+
+<CardGroup cols={2}>
+  <Card title="Custom Commands" icon="terminal">
+    Add new commands to the Demon agent
+  </Card>
+  <Card title="No Recompilation" icon="rotate">
+    Load modules at runtime without rebuilding
+  </Card>
+  <Card title="Isolation" icon="shield">
+    Execute in fork & run processes for safety
+  </Card>
+  <Card title="Integration" icon="puzzle-piece">
+    Seamlessly integrate with existing workflows
+  </Card>
+</CardGroup>
+
+## Official Modules
+
+Havoc provides official modules at [github.com/HavocFramework/Modules](https://github.com/HavocFramework/Modules):
+
+### Powerpick
+
+Executes unmanaged PowerShell commands by loading the CLR runtime into a fork & run process.
+
+```
+powerpick Get-Process | Where-Object {$_.CPU -gt 100}
+```
+
+**Features:**
+- Loads CLR 4.0.30319 into sacrificial process
+- Executes PowerShell without `powershell.exe`
+- Bypasses application whitelisting
+- Captures output and returns to operator
+
+### InvokeAssembly
+
+Executes .NET assemblies in a separate process by bootstrapping the CLR.
+
+```
+invoke-assembly /path/to/Seatbelt.exe -group=system
+```
+
+**Features:**
+- Custom CLR version selection (default: `v4.0.30319`)
+- Custom AppDomain name (default: `DefaultAppDomain`)
+- Argument passing to assembly
+- Output redirection and capture
+
+## Module Structure
+
+A Havoc module consists of:
+
+```
+MyModule/
+├── Module.py          # Module definition and registration
+├── Source/
+│   ├── Main.c        # Module entry point
+│   └── Implementation.c
+├── Include/
+│   └── Headers.h
+└── README.md
+```
+
+## Creating a Module
+
+### Module Template
+
+Start with the [official template](https://github.com/HavocFramework/Modules/tree/main/Template):
+
+```bash
+git clone https://github.com/HavocFramework/Modules
+cd Modules/Template
+cp -r Template MyModule
+```
+
+### Module.py
+
+Define your module in Python:
+
+```python Module.py
+from havoc import Demon, RegisterCommand, RegisterModule
+
+class Packer:
+    def __init__(self):
+        self.buffer = b''
+
+    def addstr(self, string):
+        self.buffer += string.encode() + b'\x00'
+
+    def addint(self, integer):
+        self.buffer += integer.to_bytes(4, 'little')
+
+    def getbuffer(self):
+        return self.buffer
+
+def mycommand(demon_id, *args):
+    """
+    Custom command implementation.
+    
+    Args:
+        demon_id: Agent ID
+        *args: Command arguments
+    """
+    task_id = Demon.Command.task_id
+    
+    if len(args) < 1:
+        Demon.Console.error(task_id, "Usage: mycommand <argument>")
+        return False
+    
+    # Pack command data
+    packer = Packer()
+    packer.addint(0x1000)  # Command ID
+    packer.addstr(args[0])  # Argument
+    
+    # Send to agent
+    Demon.Console.info(task_id, f"Executing mycommand with: {args[0]}")
+    Demon.Command.execute(demon_id, packer.getbuffer())
+    
+    return True
+
+# Register the module
+RegisterModule(
+    "MyModule",
+    "1.0",
+    "Custom functionality module",
+    "@YourHandle",
+    [
+        # List of COFF/BOF files to load
+        "MyModule.x64.o",
+        "MyModule.x86.o"
+    ]
+)
+
+# Register commands
+RegisterCommand(
+    demon_id=None,
+    command_name="mycommand",
+    description="Execute custom functionality",
+    help="mycommand <argument>",
+    callback=mycommand,
+    mitre="T1059"  # MITRE ATT&CK technique
+)
+```
+
+### C Implementation
+
+Implement the module logic in C:
+
+```c Source/Main.c
+#include <windows.h>
+#include <stdio.h>
+#include "Beacon.h"  // Beacon API compatibility
+
+// Command ID (must match Module.py)
+#define COMMAND_MYCOMMAND 0x1000
+
+// Entry point
+void go(char* args, int length) {
+    // Parse arguments from packed buffer
+    datap parser;
+    BeaconDataParse(&parser, args, length);
+    
+    int command_id = BeaconDataInt(&parser);
+    char* argument = BeaconDataExtract(&parser, NULL);
+    
+    if (command_id == COMMAND_MYCOMMAND) {
+        // Execute functionality
+        char output[256];
+        sprintf(output, "[+] Executed with argument: %s", argument);
+        BeaconPrintf(CALLBACK_OUTPUT, output);
+        
+        // Your custom logic here
+        // ...
+    }
+}
+```
+
+### Beacon API
+
+Havoc modules use the Beacon Object File (BOF) API for compatibility:
+
+<CodeGroup>
+```c Output Functions
+// Print to console
+BeaconPrintf(int type, char* format, ...);
+
+// Types:
+CALLBACK_OUTPUT       // Standard output
+CALLBACK_OUTPUT_OEM   // OEM output
+CALLBACK_ERROR        // Error message
+```
+
+```c Data Parsing
+// Parse packed data
+void BeaconDataParse(datap* parser, char* buffer, int size);
+
+// Extract data
+int BeaconDataInt(datap* parser);
+short BeaconDataShort(datap* parser);
+char* BeaconDataExtract(datap* parser, int* size);
+```
+
+```c Win32 API
+// Dynamic function resolution
+DECLSPEC_IMPORT KERNEL32$CreateFileA;
+DECLSPEC_IMPORT KERNEL32$ReadFile;
+DECLSPEC_IMPORT KERNEL32$WriteFile;
+// ... and many more
+```
+</CodeGroup>
+
+## Building Modules
+
+### Compiling to COFF/BOF
+
+Modules are compiled as COFF (Common Object File Format) objects:
+
+```bash
+# x64 version
+x86_64-w64-mingw32-gcc -c Source/Main.c -o MyModule.x64.o \
+    -I Include/ \
+    -masm=intel
+
+# x86 version
+i686-w64-mingw32-gcc -c Source/Main.c -o MyModule.x86.o \
+    -I Include/ \
+    -masm=intel
+```
+
+<Note>
+  COFF files are position-independent code loaded via the Demon COFF loader.
+</Note>
+
+### Makefile Example
+
+```makefile
+CC_x64 = x86_64-w64-mingw32-gcc
+CC_x86 = i686-w64-mingw32-gcc
+CFLAGS = -masm=intel -I Include/
+
+all: MyModule.x64.o MyModule.x86.o
+
+MyModule.x64.o: Source/Main.c
+	$(CC_x64) -c $< -o $@ $(CFLAGS)
+
+MyModule.x86.o: Source/Main.c
+	$(CC_x86) -c $< -o $@ $(CFLAGS)
+
+clean:
+	rm -f *.o
+```
+
+## Loading Modules
+
+### From Havoc Client
+
+<Steps>
+  <Step title="Open Scripts Manager">
+    Navigate to **Scripts → Scripts Manager** in the Havoc client
+  </Step>
+
+  <Step title="Load Module">
+    Click **Load** and select your `Module.py` file
+  </Step>
+
+  <Step title="Verify Registration">
+    Check the console for confirmation:
+    ```
+    [+] Loaded module: MyModule v1.0
+    [+] Registered command: mycommand
+    ```
+  </Step>
+
+  <Step title="Use Command">
+    Interact with a Demon session and use your new command:
+    ```
+    [demon-id] » mycommand test
+    [+] Executed with argument: test
+    ```
+  </Step>
+</Steps>
+
+### Auto-load on Startup
+
+Place modules in the `scripts/` directory to load automatically:
+
+```bash
+mkdir -p ~/.havoc/scripts
+cp MyModule/Module.py ~/.havoc/scripts/
+```
+
+## Example: Powerpick Module
+
+<Accordion title="View Powerpick Implementation">
+  The Powerpick module demonstrates advanced techniques:
+
+  ```python Powerpick/Module.py
+  from havoc import Demon, RegisterCommand, RegisterModule
+
+  def powerpick(demon_id, *args):
+      task_id = Demon.Command.task_id
+      
+      if len(args) < 1:
+          Demon.Console.error(task_id, "Usage: powerpick <command>")
+          return False
+      
+      # Combine all args into PowerShell command
+      ps_command = ' '.join(args)
+      
+      # Pack command
+      packer = Packer()
+      packer.addint(0x2000)  # POWERPICK_COMMAND
+      packer.addstr(ps_command)
+      
+      Demon.Console.info(task_id, f"Executing PowerShell: {ps_command}")
+      Demon.Command.execute(demon_id, packer.getbuffer())
+      
+      return True
+
+  RegisterModule(
+      "Powerpick",
+      "1.0",
+      "Execute unmanaged PowerShell",
+      "@HavocFramework",
+      [
+          "Powerpick.x64.o",
+          "Powerpick.x86.o"
+      ]
+  )
+
+  RegisterCommand(
+      demon_id=None,
+      command_name="powerpick",
+      description="Execute unmanaged PowerShell commands",
+      help="powerpick <command>",
+      callback=powerpick,
+      mitre="T1059.001"
+  )
+  ```
+
+  The C implementation:
+  - Creates sacrificial process (defined in config)
+  - Injects CLR loader shellcode
+  - Loads `mscorlib.dll` and PowerShell assemblies
+  - Executes command and captures output
+  - Returns output to teamserver
+</Accordion>
+
+## Example: InvokeAssembly Module
+
+<Accordion title="View InvokeAssembly Implementation">
+  ```python InvokeAssembly/Module.py
+  from havoc import Demon, RegisterCommand, RegisterModule
+  import base64
+
+  def invoke_assembly(demon_id, *args):
+      task_id = Demon.Command.task_id
+      
+      if len(args) < 1:
+          Demon.Console.error(task_id, "Usage: invoke-assembly <path> [args]")
+          return False
+      
+      assembly_path = args[0]
+      assembly_args = ' '.join(args[1:]) if len(args) > 1 else ""
+      
+      # Read assembly
+      try:
+          with open(assembly_path, 'rb') as f:
+              assembly_bytes = f.read()
+      except FileNotFoundError:
+          Demon.Console.error(task_id, f"Assembly not found: {assembly_path}")
+          return False
+      
+      # Pack command
+      packer = Packer()
+      packer.addint(0x2001)  # INVOKE_ASSEMBLY_COMMAND
+      packer.addstr("v4.0.30319")  # CLR version
+      packer.addstr("DefaultAppDomain")  # AppDomain name
+      packer.addint(len(assembly_bytes))
+      packer.addbytes(assembly_bytes)
+      packer.addstr(assembly_args)
+      
+      Demon.Console.info(task_id, f"Executing assembly: {assembly_path}")
+      Demon.Command.execute(demon_id, packer.getbuffer())
+      
+      return True
+
+  RegisterModule(
+      "InvokeAssembly",
+      "1.0",
+      "Execute .NET assemblies",
+      "@HavocFramework",
+      [
+          "InvokeAssembly.x64.o",
+          "InvokeAssembly.x86.o"
+      ]
+  )
+
+  RegisterCommand(
+      demon_id=None,
+      command_name="invoke-assembly",
+      description="Execute a .NET assembly",
+      help="invoke-assembly <path> [arguments]",
+      callback=invoke_assembly,
+      mitre="T1620"
+  )
+  ```
+</Accordion>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    ```c
+    void go(char* args, int length) {
+        __try {
+            // Module logic
+            execute_functionality();
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            BeaconPrintf(CALLBACK_ERROR, "[-] Exception occurred");
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Memory Management">
+    ```c
+    // Allocate memory
+    void* buffer = MSVCRT$malloc(size);
+    if (!buffer) {
+        BeaconPrintf(CALLBACK_ERROR, "[-] Memory allocation failed");
+        return;
+    }
+    
+    // Use buffer
+    // ...
+    
+    // Free memory
+    MSVCRT$free(buffer);
+    ```
+  </Accordion>
+
+  <Accordion title="OPSEC Considerations">
+    - Use indirect syscalls where possible
+    - Avoid suspicious API calls (e.g., `CreateRemoteThread`)
+    - Clean up artifacts (files, registry keys)
+    - Implement anti-debugging checks
+    - Use fork & run for risky operations
+  </Accordion>
+
+  <Accordion title="Testing">
+    ```python
+    # Test module before deployment
+    def test_mycommand():
+        # Mock demon_id
+        result = mycommand("test-demon", "test-arg")
+        assert result == True, "Command should succeed"
+    
+    if __name__ == "__main__":
+        test_mycommand()
+        print("[+] Tests passed")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Advanced Techniques
+
+### Custom Packer Class
+
+```python
+class AdvancedPacker(Packer):
+    def addwstr(self, string):
+        """Add wide string (UTF-16LE)"""
+        self.buffer += string.encode('utf-16le') + b'\x00\x00'
+    
+    def addptr(self, pointer):
+        """Add pointer (8 bytes on x64)"""
+        self.buffer += pointer.to_bytes(8, 'little')
+    
+    def addbool(self, value):
+        """Add boolean (1 byte)"""
+        self.buffer += b'\x01' if value else b'\x00'
+```
+
+### Multi-Command Modules
+
+```python Module.py
+RegisterModule(
+    "AdvancedModule",
+    "1.0",
+    "Multiple related commands",
+    "@YourHandle",
+    ["Module.x64.o", "Module.x86.o"]
+)
+
+# Register multiple commands
+RegisterCommand(
+    demon_id=None,
+    command_name="cmd1",
+    description="First command",
+    help="cmd1 <arg>",
+    callback=command1_callback,
+    mitre="T1059"
+)
+
+RegisterCommand(
+    demon_id=None,
+    command_name="cmd2",
+    description="Second command",
+    help="cmd2 <arg>",
+    callback=command2_callback,
+    mitre="T1059"
+)
+```
+
+### Dynamic Library Loading
+
+```c Source/Main.c
+#include "Beacon.h"
+
+// Dynamically load and use libraries
+void load_custom_library() {
+    HMODULE hLib = KERNEL32$LoadLibraryA("custom.dll");
+    if (!hLib) {
+        BeaconPrintf(CALLBACK_ERROR, "[-] Failed to load library");
+        return;
+    }
+    
+    // Get function pointer
+    typedef void (*CustomFunc)(void);
+    CustomFunc func = (CustomFunc)KERNEL32$GetProcAddress(hLib, "CustomFunction");
+    
+    if (func) {
+        func();
+    }
+    
+    KERNEL32$FreeLibrary(hLib);
+}
+```
+
+## Debugging Modules
+
+<Steps>
+  <Step title="Enable Debug Output">
+    Use `BeaconPrintf` for debug messages:
+    ```c
+    BeaconPrintf(CALLBACK_OUTPUT, "[DEBUG] Variable value: %d", value);
+    ```
+  </Step>
+
+  <Step title="Test COFF Loader">
+    Use standalone COFF loader for testing:
+    ```bash
+    # Test with COFFLoader
+    ./COFFLoader MyModule.x64.o go "test_args"
+    ```
+  </Step>
+
+  <Step title="Check Teamserver Logs">
+    Monitor Teamserver output:
+    ```bash
+    sudo ./havoc server --profile ./profiles/havoc.yaotl --debug
+    ```
+  </Step>
+</Steps>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Official Modules" icon="github" href="https://github.com/HavocFramework/Modules">
+    Powerpick, InvokeAssembly, and module template
+  </Card>
+  <Card title="Beacon API Reference" icon="book" href="https://hstechdocs.helpsystems.com/manuals/cobaltstrike/current/userguide/content/topics/beacon-object-files_main.htm">
+    BOF API documentation (Cobalt Strike compatible)
+  </Card>
+  <Card title="Python API" href="/extensibility/python-api">
+    havoc-py reference for Module.py
+  </Card>
+  <Card title="Custom Agents" href="/extensibility/custom-agents">
+    Build agents instead of modules
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Module Not Loading">
+    - Check `Module.py` syntax
+    - Verify COFF files exist and are referenced correctly
+    - Check Havoc console for error messages
+    - Ensure module name is unique
+  </Accordion>
+
+  <Accordion title="Command Not Working">
+    - Verify command ID matches between Python and C
+    - Check argument packing/unpacking
+    - Enable debug output in C code
+    - Test with simple arguments first
+  </Accordion>
+
+  <Accordion title="Compilation Errors">
+    - Ensure correct mingw-w64 toolchain installed
+    - Check include paths for Beacon.h
+    - Verify target architecture (x64 vs x86)
+    - Use `-masm=intel` for inline assembly
+  </Accordion>
+</AccordionGroup>

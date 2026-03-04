@@ -1,0 +1,293 @@
+---
+title: Welcome to Havoc Framework
+description: Modern and malleable post-exploitation command and control framework
+mode: custom
+---
+
+<div className="relative overflow-hidden bg-gradient-to-br from-[#2a2c3a] via-[#1f2130] to-[#0f1117] py-20 lg:py-24">
+  <div className="mx-auto max-w-7xl px-6 lg:px-8">
+    <div className="mx-auto max-w-3xl text-center">
+      <h1 className="text-5xl font-bold tracking-tight text-white sm:text-6xl lg:text-7xl">
+        Havoc Framework
+      </h1>
+      <p className="mt-6 text-lg leading-8 text-gray-300 sm:text-xl">
+        A modern and malleable post-exploitation command and control framework for red team operations. Built with flexibility, extensibility, and stealth in mind.
+      </p>
+      <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+        <a
+          href="/quickstart"
+          className="rounded-lg bg-[#fcfcf4] px-6 py-3 text-base font-semibold text-[#1f2937] shadow-sm transition-colors hover:bg-[#e8e8e0] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fcfcf4]"
+        >
+          Get started
+        </a>
+        <a
+          href="/concepts/architecture"
+          className="rounded-lg border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20 hover:border-white/40"
+        >
+          Learn the basics
+        </a>
+        <a
+          href="https://github.com/HavocFramework/Havoc"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-lg border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20 hover:border-white/40"
+        >
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Get started in minutes</h2>
+    <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
+      Follow these steps to set up your Havoc Framework environment
+    </p>
+  </div>
+
+  <div className="mt-12">
+    <Steps>
+      <Step title="Install dependencies">
+        Install the required dependencies for your operating system. Havoc works best on Debian 10/11, Ubuntu 20.04/22.04, and Kali Linux.
+
+        ```bash Ubuntu/Debian
+        sudo apt install -y git build-essential cmake libfontconfig1 libglu1-mesa-dev \
+          libgtest-dev libspdlog-dev libboost-all-dev libncurses5-dev libgdbm-dev \
+          libssl-dev libreadline-dev libffi-dev libsqlite3-dev libbz2-dev qtbase5-dev \
+          qtchooser qt5-qmake qtbase5-dev-tools libqt5websockets5 libqt5websockets5-dev \
+          qtdeclarative5-dev golang-go python3.10 python3.10-dev mingw-w64 nasm
+        ```
+      </Step>
+
+      <Step title="Clone and build">
+        Clone the Havoc repository and build both the teamserver and client.
+
+        ```bash
+        git clone https://github.com/HavocFramework/Havoc.git
+        cd Havoc
+        
+        # Build teamserver
+        make ts-build
+        
+        # Build client
+        make client-build
+        ```
+      </Step>
+
+      <Step title="Start the teamserver">
+        Launch the teamserver with your profile configuration. The teamserver handles listeners, payload generation, and client connections.
+
+        ```bash
+        sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+        ```
+
+        <Note>
+          The teamserver will listen on port 40056 by default. You can customize this in the profile configuration.
+        </Note>
+      </Step>
+
+      <Step title="Connect with the client">
+        Start the Havoc client and connect to your running teamserver.
+
+        ```bash
+        ./havoc client
+        ```
+
+        Enter your teamserver connection details (host, port, username, and password) in the profile window.
+      </Step>
+
+      <Step title="Create a listener and generate a payload">
+        From the client, navigate to **View** → **Listeners** to create an HTTP/HTTPS listener. Then go to **Attack** → **Payload** to generate your first Demon agent.
+
+        <Accordion title="Example payload generation">
+          Configure your Demon agent with:
+          - **Listener**: Select your HTTP/HTTPS listener
+          - **Format**: EXE, DLL, or Shellcode
+          - **Architecture**: x64 (x86 support coming soon)
+          - **Sleep**: 2 seconds (customizable)
+          - **Jitter**: 15% (adds randomness to sleep intervals)
+        </Accordion>
+      </Step>
+    </Steps>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Explore by topic</h2>
+    <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
+      Dive deeper into Havoc's capabilities and architecture
+    </p>
+  </div>
+
+  <div className="mt-12">
+    <CardGroup cols={3}>
+      <Card title="Core concepts" icon="book-open" href="/concepts/architecture">
+        Understand the architecture, teamserver, client, and profile system
+      </Card>
+      <Card title="Demon agent" icon="ghost" href="/demon/overview">
+        Explore the flagship agent with sleep obfuscation and indirect syscalls
+      </Card>
+      <Card title="Listeners" icon="tower-broadcast" href="/listeners/overview">
+        Configure HTTP/HTTPS and SMB listeners for agent communication
+      </Card>
+      <Card title="Commands" icon="terminal" href="/demon/commands">
+        Master the built-in commands for process, token, and job management
+      </Card>
+      <Card title="Extensibility" icon="puzzle-piece" href="/extensibility/overview">
+        Extend Havoc with custom agents, modules, and the Python API
+      </Card>
+      <Card title="Advanced techniques" icon="flask" href="/advanced/indirect-syscalls">
+        Learn about indirect syscalls, sleep obfuscation, and evasion techniques
+      </Card>
+    </CardGroup>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Key features</h2>
+    <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
+      What makes Havoc Framework powerful for red team operations
+    </p>
+  </div>
+
+  <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Sleep obfuscation</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Multiple sleep obfuscation techniques including Ekko, Zilean, and FOLIAGE to evade memory scanners during agent sleep cycles.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Indirect syscalls</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Execute NT APIs via indirect syscalls with return address spoofing to evade EDR instrumentation callbacks.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Multiplayer support</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Multiple operators can connect to the same teamserver simultaneously, enabling collaborative red team operations.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Customizable profiles</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Configure every aspect of your C2 infrastructure using YAOTL profiles, from HTTP headers to sleep behavior.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Token vault</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Steal, store, and impersonate access tokens from running processes for privilege escalation and lateral movement.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-gray-200 dark:border-[#27272a] bg-white dark:bg-[#1a1d27] p-6 transition-colors hover:border-[#fcfcf4] dark:hover:border-[#fcfcf4]">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-[#fcfcf4]/10 p-2">
+          <svg className="h-6 w-6 text-[#fcfcf4]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Extensible architecture</h3>
+      </div>
+      <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+        Extend functionality with custom agents, modules, External C2, and a Python API for automation and integration.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+  <div className="text-center">
+    <h2 className="text-3xl font-bold text-gray-900 dark:text-white">Community and support</h2>
+    <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
+      Join the Havoc community and get help from other operators
+    </p>
+  </div>
+
+  <div className="mt-12">
+    <CardGroup cols={2}>
+      <Card title="Discord community" icon="discord" href="https://discord.gg/z3PF3NRDE5">
+        Join our Discord server to chat with the community and get support
+      </Card>
+      <Card title="GitHub discussions" icon="github" href="https://github.com/HavocFramework/Havoc/discussions">
+        Ask questions and share ideas in GitHub discussions
+      </Card>
+      <Card title="Report issues" icon="bug" href="https://github.com/HavocFramework/Havoc/issues">
+        Found a bug? Report it on our GitHub issues page
+      </Card>
+      <Card title="Contributing" icon="code-pull-request" href="/resources/contributing">
+        Learn how to contribute to Havoc Framework
+      </Card>
+    </CardGroup>
+  </div>
+</div>
+
+<div className="mt-20 mb-16 max-w-5xl mx-auto px-6">
+  <div className="relative overflow-hidden rounded-2xl border border-gray-200 dark:border-[#27272a] bg-gradient-to-br from-[#2a2c3a] to-[#1f2130] p-12 text-center">
+    <div className="relative z-10">
+      <h2 className="text-3xl font-bold text-white sm:text-4xl">Ready to get started?</h2>
+      <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
+        Install Havoc Framework and start building your red team infrastructure today.
+      </p>
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+        <a
+          href="/installation"
+          className="rounded-lg bg-[#fcfcf4] px-6 py-3 text-base font-semibold text-[#1f2937] shadow-sm transition-colors hover:bg-[#e8e8e0]"
+        >
+          Installation guide
+        </a>
+        <a
+          href="/quickstart"
+          className="rounded-lg border border-white/30 bg-white/10 px-6 py-3 text-base font-semibold text-white backdrop-blur-sm transition-colors hover:bg-white/20"
+        >
+          Quickstart
+        </a>
+      </div>
+    </div>
+  </div>
+</div>

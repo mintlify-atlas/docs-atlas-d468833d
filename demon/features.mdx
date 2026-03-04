@@ -1,0 +1,441 @@
+---
+title: Demon Features
+description: Core capabilities and evasion techniques of the Demon agent
+---
+
+## Evasion Features
+
+### Indirect Syscalls
+
+Demon implements indirect syscall execution to bypass userland hooks placed by EDR solutions.
+
+<Accordion title="How It Works">
+  Traditional malware uses Win32 APIs like `VirtualAllocEx` or `CreateRemoteThread`, which jump into `ntdll.dll` functions. EDR solutions hook these functions to intercept malicious calls.
+  
+  **Demon's Approach:**
+  
+  1. Parse `ntdll.dll` from disk to find syscall stubs
+  2. Extract syscall Service Numbers (SSN) for each Nt* function
+  3. Dynamically craft syscall stubs in memory
+  4. Execute syscalls directly without going through hooked functions
+  5. Spoof the return address to point within `ntdll.dll` module
+  
+  **Result**: EDR hooks are bypassed entirely, and the call stack appears legitimate.
+</Accordion>
+
+<CodeGroup>
+```c Syscall Structure
+typedef struct {
+    PVOID  SysAddress;  // 'syscall' instruction pointer
+    UINT32 Size;        // size of each 'syscall' stub
+    
+    // Syscall Service Numbers (SSNs)
+    WORD NtOpenProcess;
+    WORD NtAllocateVirtualMemory;
+    WORD NtWriteVirtualMemory;
+    WORD NtCreateThreadEx;
+    // ... more syscalls
+} Syscall;
+```
+
+```asm Syscall Stub (x64)
+; Dynamically generated syscall stub
+mov r10, rcx           ; Save RCX
+mov eax, [SSN]         ; Load syscall number
+syscall                ; Execute syscall
+ret                    ; Return
+```
+</CodeGroup>
+
+**APIs Using Indirect Syscalls:**
+- Process operations: `NtOpenProcess`, `NtTerminateProcess`
+- Memory operations: `NtAllocateVirtualMemory`, `NtWriteVirtualMemory`, `NtProtectVirtualMemory`
+- Thread operations: `NtCreateThreadEx`, `NtSuspendThread`, `NtResumeThread`
+- Object operations: `NtDuplicateObject`, `NtClose`
+- Token operations: `NtOpenProcessToken`, `NtDuplicateToken`
+
+<Warning>
+  Some EDRs detect anomalous syscall usage patterns. Combine indirect syscalls with other evasion techniques for maximum effectiveness.
+</Warning>
+
+### Return Address Spoofing
+
+On x64 systems, Demon implements call stack spoofing to hide malicious call chains.
+
+<Accordion title="Technical Details">
+  **The Problem:**
+  When malicious code calls sensitive APIs, the call stack reveals the true origin of the call, potentially pointing to unbacked memory regions or suspicious modules.
+  
+  **Demon's Solution:**
+  
+  Uses assembly trampolines to manipulate the call stack before invoking functions:
+  
+  1. Save current RBX register
+  2. Set up trampoline address pointing to legitimate code
+  3. Execute target function through trampoline
+  4. Return address appears to originate from legitimate module
+  
+  **Implementation:**
+  ```c
+  // Spoof return address when calling functions
+  SpoofFunc(
+      Instance->Modules.Kernel32,           // Module to spoof from
+      IMAGE_SIZE(Instance->Modules.Kernel32), // Module size
+      TargetFunction,                        // Function to call
+      Arg1, Arg2, Arg3                      // Arguments
+  );
+  ```
+</Accordion>
+
+<Note>
+  Return address spoofing is implemented in `src/asm/Spoof.x64.asm` and automatically applied when the StackSpoof configuration option is enabled.
+</Note>
+
+### AMSI Bypass
+
+AMSI (Anti-Malware Scan Interface) integration in PowerShell and .NET blocks malicious scripts. Demon patches AMSI to bypass scanning.
+
+<Tabs>
+  <Tab title="Hardware Breakpoints">
+    **Most Stealthy Method**
+    
+    Uses Vectored Exception Handling (VEH) with hardware breakpoints:
+    
+    1. Register VEH handler
+    2. Set hardware breakpoint on `AmsiScanBuffer`
+    3. When AMSI tries to scan, exception fires
+    4. VEH handler modifies return value to indicate clean content
+    5. No memory modifications required
+    
+    **Advantages:**
+    - No suspicious memory writes
+    - Harder to detect
+    - Bypasses memory integrity checks
+    
+    **Configuration:**
+    ```yaml
+    Implant:
+      AmsiEtwPatch: 1  # Hardware breakpoints
+    ```
+  </Tab>
+  
+  <Tab title="Memory Patching">
+    **Direct Modification**
+    
+    Patches `AmsiScanBuffer` in memory:
+    
+    1. Locate `amsi.dll` in memory
+    2. Find `AmsiScanBuffer` function
+    3. Change memory protection to RWX
+    4. Overwrite with return instruction
+    5. Restore RX protection
+    
+    **Patch Pattern:**
+    ```asm
+    ; Original
+    AmsiScanBuffer:
+        mov rax, rcx
+        ...
+    
+    ; Patched
+    AmsiScanBuffer:
+        xor eax, eax  ; Return 0 (clean)
+        ret
+    ```
+    
+    **Configuration:**
+    ```yaml
+    Implant:
+      AmsiEtwPatch: 2  # Memory patching
+    ```
+  </Tab>
+</Tabs>
+
+### ETW Bypass
+
+ETW (Event Tracing for Windows) provides telemetry to EDR solutions. Demon can disable ETW for its process.
+
+**Method**: Patches `NtTraceEvent` to prevent ETW event generation
+
+**Impact**: Reduces visibility to EDR solutions that rely on ETW telemetry
+
+<Warning>
+  Disabling ETW may itself be a detectable behavior. Use judiciously based on your operational environment.
+</Warning>
+
+## Execution Features
+
+### BOF/COFF Loader
+
+Demon includes a COFF (Common Object File Format) loader for executing Beacon Object Files (BOFs).
+
+<Accordion title="BOF Execution">
+  **Features:**
+  - In-memory COFF parsing and linking
+  - Beacon API compatibility layer
+  - Support for BOF arguments
+  - Output capture and relay to teamserver
+  
+  **Execution Methods:**
+  - **Inline**: Execute in current process (fast, less OPSEC-safe)
+  - **Threaded**: Execute in separate thread with job management
+  - **VEH Protected**: Use vectored exception handling for crash protection
+  
+  **Configuration:**
+  ```yaml
+  Implant:
+    CoffeeThreaded: true  # Execute BOFs in threads
+    CoffeeVeh: true       # Enable crash protection
+  ```
+</Accordion>
+
+**Supported BOF APIs:**
+- `BeaconPrintf` - Output text
+- `BeaconOutput` - Send binary output
+- `BeaconDataParse` - Parse arguments
+- `BeaconGetValue` - Retrieve beacon information
+- Win32 API stubs through Demon's import table
+
+### .NET Assembly Execution
+
+Demon can host the CLR (Common Language Runtime) to execute .NET assemblies in-memory.
+
+<Steps>
+  <Step title="CLR Initialization">
+    Demon loads `mscoree.dll` and creates a CLR instance using `CLRCreateInstance`.
+  </Step>
+  
+  <Step title="AMSI Patching">
+    Before loading assemblies, `amsi.dll` is loaded and patched to bypass AMSI scanning of the assembly.
+  </Step>
+  
+  <Step title="AppDomain Creation">
+    A new AppDomain is created to isolate the assembly execution environment.
+  </Step>
+  
+  <Step title="Assembly Loading">
+    The assembly is loaded from memory using `Load_3` method (byte array).
+  </Step>
+  
+  <Step title="Execution">
+    Entry point is located and invoked with provided arguments. Console output is captured.
+  </Step>
+</Steps>
+
+<Warning>
+  **OPSEC Consideration**: Loading the CLR is irreversible and increases the process footprint. Use inline .NET execution carefully.
+</Warning>
+
+### Shellcode Injection
+
+Multiple shellcode injection techniques with configurable API usage.
+
+See [Injection Techniques](/demon/injection) for detailed documentation.
+
+## Defense Evasion
+
+### Dynamic API Resolution
+
+Demon resolves Win32 APIs dynamically at runtime to avoid static import tables.
+
+<Accordion title="PEB Walking">
+  **Process:**
+  1. Access Thread Environment Block (TEB)
+  2. Traverse to Process Environment Block (PEB)
+  3. Walk `InLoadOrderModuleList` to find loaded DLLs
+  4. Parse PE headers to locate export tables
+  5. Match function names by hash
+  6. Cache resolved addresses for performance
+  
+  **Hashing Algorithm:**
+  ```c
+  ULONG Hash = HASH_KEY;  // Initial key
+  for (each character) {
+      if (character >= 'a')
+          character -= 0x20;  // Uppercase
+      Hash = ((Hash << 5) + Hash) + character;
+  }
+  ```
+</Accordion>
+
+**Benefits:**
+- No suspicious imports in PE header
+- Can resolve functions from any loaded module
+- Evades basic static analysis
+
+### Proxy Loading
+
+Demon can load and execute code through legitimate Windows APIs to appear as normal system activity.
+
+<CardGroup cols={3}>
+  <Card title="RtlRegisterWait" icon="clock">
+    Registers a wait operation that executes code when signaled.
+  </Card>
+  <Card title="RtlCreateTimer" icon="timer">
+    Creates a timer callback that executes code at specified intervals.
+  </Card>
+  <Card title="RtlQueueWorkItem" icon="list-check">
+    Queues a work item to the thread pool for execution.
+  </Card>
+</CardGroup>
+
+**Use Case**: Execute BOFs or shellcode through legitimate Windows thread pool APIs, making execution appear as normal system activity.
+
+### Stack Duplication
+
+During sleep obfuscation (Ekko/Zilean), Demon can duplicate the stack from another thread.
+
+**Purpose**: When sleeping with stack spoofing enabled, the NT_TIB (Thread Information Block) is duplicated from a legitimate thread to make the sleeping thread's stack appear normal during inspection.
+
+**Configuration:**
+```yaml
+Implant:
+  StackSpoof: true  # Enable stack duplication during sleep
+```
+
+## Configuration Management
+
+### Runtime Configuration
+
+Many Demon settings can be modified at runtime without recompiling:
+
+```bash
+# Change sleep settings
+config sleep 10 30  # 10 second sleep, 30% jitter
+
+# Change injection technique
+config injection technique 2  # Syscall-based injection
+
+# Change memory allocation method
+config memory alloc 2  # Syscall-based allocation
+
+# Change spawn processes
+config injection spawn64 C:\Windows\System32\dllhost.exe
+config injection spawn32 C:\Windows\SysWOW64\dllhost.exe
+
+# Set kill date
+config killdate 2024-12-31 23:59:59
+
+# Set working hours
+config workinghours 08:00-17:00
+```
+
+<Note>
+  Use the `config` command without arguments to display current configuration.
+</Note>
+
+## Process Features
+
+### Process Enumeration
+
+Demon provides detailed process information:
+
+```bash
+proc list
+```
+
+**Output includes:**
+- Process Name
+- Process ID (PID)
+- Parent Process ID (PPID)
+- Process Architecture (x86/x64)
+- Username (if accessible)
+- Session ID
+
+### Module Enumeration
+
+List loaded modules in a target process:
+
+```bash
+proc module [pid]
+```
+
+**Shows:**
+- Module name
+- Base address
+- Module size
+- Full path
+
+### Memory Enumeration
+
+Query process memory regions:
+
+```bash
+proc memory [pid] [protection]
+```
+
+**Protection filters:**
+- `PAGE_EXECUTE_READ` (RX)
+- `PAGE_EXECUTE_READWRITE` (RWX)
+- `PAGE_READWRITE` (RW)
+
+**Use case**: Find injectable memory regions or suspicious allocations
+
+## Token Features
+
+### Token Vault
+
+Demon maintains a token vault for storing stolen tokens:
+
+<Accordion title="Token Management">
+  **Workflow:**
+  
+  1. **Enumerate tokens**: `token find-tokens` - Scan system for accessible tokens
+  2. **Steal token**: `token steal [pid]` - Duplicate token from process
+  3. **Store in vault**: Token automatically added to vault with unique ID
+  4. **List vault**: `token list` - View all stolen tokens
+  5. **Impersonate**: `token impersonate [id]` - Apply token to current thread
+  6. **Revert**: `token revert` - Return to default process token
+  
+  **Token Information Displayed:**
+  - Username
+  - Domain
+  - Token type (Primary/Impersonation)
+  - Integrity level
+  - Session ID
+</Accordion>
+
+### Privilege Escalation
+
+```bash
+# Attempt to enable all privileges
+token privs-get
+
+# List current privileges
+token privs-list
+```
+
+**Common privileges:**
+- `SeDebugPrivilege` - Debug programs
+- `SeImpersonatePrivilege` - Impersonate tokens
+- `SeLoadDriverPrivilege` - Load kernel drivers
+- `SeTcbPrivilege` - Act as part of OS
+
+### Token Creation
+
+Create tokens from credentials:
+
+```bash
+token make [domain] [username] [password]
+```
+
+**Methods:**
+- `LogonUserW` - Standard logon
+- Network logon (Type 3) - No profile load
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Command Reference" icon="book" href="/demon/commands">
+    Complete documentation of all commands
+  </Card>
+  <Card title="Sleep Obfuscation" icon="bed" href="/demon/sleep-obfuscation">
+    Configure advanced sleep techniques
+  </Card>
+  <Card title="Injection Methods" icon="syringe" href="/demon/injection">
+    Deep dive into process injection
+  </Card>
+  <Card title="Generate Payloads" icon="hammer" href="/demon/generation">
+    Create configured Demon agents
+  </Card>
+</CardGroup>

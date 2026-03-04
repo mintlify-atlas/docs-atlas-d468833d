@@ -1,0 +1,239 @@
+---
+title: 'Troubleshooting'
+description: 'Common issues and solutions for Havoc Framework'
+---
+
+<Note>
+  See the [Issues tab](https://github.com/HavocFramework/Havoc/issues) on GitHub for all open issues and additional troubleshooting help.
+</Note>
+
+## Installation Issues
+
+### Kali Linux Font/Formatting Issues
+
+Kali has issues loading the proper font (Monaco) from the embedded Qt resources file.
+
+<Warning>
+  You will experience formatting issues in the Havoc client if you are not using a monospace/fixed-width font!
+</Warning>
+
+**Solution:**
+- Ensure your system has a monospace/fixed-width font installed
+- The Monaco font should be properly embedded in Qt resources
+- If issues persist, try installing additional monospace fonts on your system
+
+## Build Errors
+
+### fatal error: Python.h: No such file or directory
+
+If you get an error that `Python.h` isn't found when building, you need to make sure Python 3.10 is installed and you have the Python 3.10 development files.
+
+<Note>
+  If you are using Ubuntu LTS you may need to leverage a PPA such as `deadsnakes` to get a newer version of Python.
+</Note>
+
+**Solution for Ubuntu:**
+
+```bash
+sudo apt install build-essential
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+sudo apt install python3.10 python3.10-dev
+```
+
+**Solution for Debian 10/11:**
+
+You must setup the `bookworm` repo for Python 3.10:
+
+```bash
+echo 'deb http://ftp.de.debian.org/debian bookworm main' >> /etc/apt/sources.list
+sudo apt update
+sudo apt install python3-dev python3.10-dev libpython3.10 libpython3.10-dev python3.10
+```
+
+### incomplete type 'QTime' used in nested name specifier
+
+You probably need a newer version of Qt.
+
+**Solution for Ubuntu:**
+
+Try adding a backports PPA and installing the latest Qt6 dev packages.
+
+<Note>
+  For detailed information, see [Issue #95](https://github.com/HavocFramework/Havoc/issues/95) on GitHub.
+</Note>
+
+**Steps:**
+1. Add a Qt backports repository to your system
+2. Update package lists: `sudo apt update`
+3. Install latest Qt6 development packages: `sudo apt install qtbase5-dev qt5-qmake qtbase5-dev-tools`
+
+### Known compiler issue: [-] Couldn't compile implant: exit status 1
+
+This is a known compiler issue that may occur during payload generation.
+
+<Warning>
+  For detailed troubleshooting steps and solutions, see [Issue #105](https://github.com/HavocFramework/Havoc/issues/105) on GitHub.
+</Warning>
+
+**Common causes:**
+- Missing or incompatible compiler tools (mingw-w64, nasm)
+- Incorrect Go dependencies
+- Build environment configuration issues
+
+**Potential solutions:**
+1. Ensure all build dependencies are installed:
+   ```bash
+   sudo apt install mingw-w64 nasm golang-go
+   ```
+
+2. Install additional Go dependencies:
+   ```bash
+   go mod download golang.org/x/sys  
+   go mod download github.com/ugorji/go
+   ```
+
+3. Check the teamserver logs with debug output enabled:
+   ```bash
+   sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+   ```
+
+## Runtime Issues
+
+### Client Cannot Connect to Teamserver
+
+**Symptoms:**
+- Connection refused errors
+- Timeout when connecting
+- Authentication failures
+
+**Solutions:**
+
+1. **Verify Teamserver is Running:**
+   ```bash
+   sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+   ```
+
+2. **Check Profile Configuration:**
+   - Verify `Host` and `Port` in the teamserver profile match your client settings
+   - Ensure the `Operators` section has the correct username/password
+
+3. **Firewall Rules:**
+   - Ensure the teamserver port (default: 40056) is not blocked
+   - Check iptables/firewall rules on the server
+
+4. **Network Connectivity:**
+   - Test basic connectivity: `nc -zv <teamserver-ip> <port>`
+   - Verify you're using the correct IP address/hostname
+
+### Agent Not Checking In
+
+**Symptoms:**
+- Generated payload executes but doesn't appear in Havoc client
+- No callback received from agent
+
+**Solutions:**
+
+1. **Verify Listener Configuration:**
+   - Ensure listener is properly configured and active
+   - Check `Hosts`, `PortBind`, and `PortConn` settings
+   - Verify `Secure` setting matches protocol (HTTP vs HTTPS)
+
+2. **Network Issues:**
+   - Verify target can reach the listener IP/port
+   - Check for network filtering/firewall rules
+   - Test listener accessibility: `curl http://<listener-ip>:<port>`
+
+3. **Payload Configuration:**
+   - Ensure payload was generated with correct listener
+   - Check that payload architecture matches target system
+   - Verify kill date hasn't passed (if configured)
+
+4. **Enable Debug Mode:**
+   ```bash
+   sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug-dev
+   ```
+   
+   <Warning>
+     Debug mode adds `-D DEBUG` flag and increases payload size. Only use for troubleshooting.
+   </Warning>
+
+### Sleep Obfuscation Not Working
+
+**Symptoms:**
+- Sleep obfuscation doesn't appear to be active
+- Memory encryption not occurring
+
+<Note>
+  Sleep obfuscation requires that all threads are suspended. Jobs running in their own threads will prevent sleep obfuscation.
+</Note>
+
+**Solutions:**
+
+1. **Check for Running Jobs:**
+   - Use `job list` command to see active jobs
+   - Kill or wait for long-running jobs to complete
+   - Sleep obfuscation will only occur when no job threads are running
+
+2. **Verify Profile Configuration:**
+   - Ensure `SleepMask` is enabled in the Demon profile:
+     ```hcl
+     Demon {
+         Implant {
+             SleepMask = 1
+             SleepMaskTechnique = 2  # 0=WaitForSingleObjectEx, 1=FOLIAGE, 2=Ekko
+         }
+     }
+     ```
+
+3. **Regenerate Payload:**
+   - If profile was changed, regenerate the payload with new settings
+
+## macOS Specific Issues
+
+### Qt Linking Issues
+
+**After building the client on macOS:**
+
+```bash
+brew unlink qt && brew link qt
+```
+
+**Initial Setup:**
+
+Ensure Homebrew and required packages are installed:
+
+```bash
+brew install --cask cmake
+brew install python@3.10 qt@5 spdlog golang
+brew link --overwrite qt@5
+```
+
+## WSL (Windows Subsystem for Linux) Issues
+
+### GUI Not Launching
+
+<Note>
+  For GUI applications to work in WSL, you need to install the appropriate display driver.
+</Note>
+
+**Solution:**
+
+Navigate to [Microsoft's WSL GUI Apps Tutorial](https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps) and download the needed driver for the GUI to launch.
+
+## Getting Additional Help
+
+If your issue isn't listed here:
+
+1. Check the [Known Issues](https://github.com/HavocFramework/Havoc/wiki#known-issues) wiki page
+2. Search [existing GitHub issues](https://github.com/HavocFramework/Havoc/issues)
+3. Join the [Havoc Discord](https://discord.gg/z3PF3NRDE5) for community support
+4. Review the [complete documentation](https://havocframework.com/docs)
+
+<Warning>
+  When opening a new issue, provide:
+  - Your OS and version
+  - Steps to reproduce
+  - Full error messages or logs
+  - Output from running with `--debug` flag
+</Warning>

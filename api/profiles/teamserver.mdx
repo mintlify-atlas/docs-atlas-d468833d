@@ -1,0 +1,103 @@
+---
+title: 'Teamserver Profile'
+description: 'Configuration options for the Havoc Teamserver'
+---
+
+The `Teamserver` section configures the bind address, port, and compiler paths for the Havoc Teamserver.
+
+## Syntax
+
+```hcl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+
+    Build {
+        Compiler64 = "data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+```
+
+## Parameters
+
+<ParamField path="Host" type="string" required>
+  The bind address used by the teamserver to accept client connections.
+  
+  **Default:** `"0.0.0.0"` (listens on all interfaces)
+</ParamField>
+
+<ParamField path="Port" type="integer" required>
+  The port the teamserver listens on for client connections.
+  
+  **Default:** `40056`
+</ParamField>
+
+## Build Configuration
+
+The `Build` section specifies the paths to cross-compilation tools used for generating Demon implants.
+
+<ParamField path="Build.Compiler64" type="string" required>
+  Path to the x64 MinGW cross-compiler (gcc).
+  
+  **Example:** `"data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"`
+</ParamField>
+
+<ParamField path="Build.Compiler86" type="string" required>
+  Path to the x86 MinGW cross-compiler (gcc).
+  
+  **Example:** `"data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"`
+</ParamField>
+
+<ParamField path="Build.Nasm" type="string" required>
+  Path to the NASM assembler binary.
+  
+  **Example:** `"/usr/bin/nasm"`
+</ParamField>
+
+## Examples
+
+### Standard Configuration
+
+```hcl
+Teamserver {
+    Host = "0.0.0.0"
+    Port = 40056
+
+    Build {
+        Compiler64 = "data/x86_64-w64-mingw32-cross/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "data/i686-w64-mingw32-cross/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+```
+
+### System-Wide Compilers
+
+```hcl
+Teamserver {
+    Host = "127.0.0.1"
+    Port = 50050
+
+    Build {
+        Compiler64 = "/usr/bin/x86_64-w64-mingw32-gcc"
+        Compiler86 = "/usr/bin/i686-w64-mingw32-gcc"
+        Nasm = "/usr/bin/nasm"
+    }
+}
+```
+
+<Note>
+  The teamserver must have access to MinGW cross-compilers and NASM to compile Demon implants. Ensure these tools are installed and the paths are correct before starting the teamserver.
+</Note>
+
+## Usage
+
+Start the teamserver with a profile:
+
+```bash
+sudo ./havoc server --profile ./profiles/havoc.yaotl -v --debug
+```
+
+All files created during teamserver operations are stored in the `/Havoc/data/*` directory.

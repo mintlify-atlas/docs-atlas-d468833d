@@ -1,0 +1,99 @@
+---
+title: Listeners Overview
+description: Introduction to Havoc Framework listeners and how they facilitate agent communication
+---
+
+Listeners are the communication channels through which Havoc agents (Demons) connect back to the teamserver. They handle incoming connections from deployed agents and manage bidirectional command and control traffic.
+
+## Listener Types
+
+Havoc Framework supports multiple listener types to accommodate different operational scenarios:
+
+<CardGroup cols={2}>
+  <Card title="HTTP/HTTPS" icon="globe" href="/listeners/http-https">
+    Standard web-based listeners for external agent communication with customizable profiles
+  </Card>
+  <Card title="SMB" icon="share-nodes" href="/listeners/smb">
+    Named pipe listeners for internal lateral movement and peer-to-peer communication
+  </Card>
+</CardGroup>
+
+## How Listeners Work
+
+Listeners are configured in your Havoc profile (`.yaotl` file) and automatically start when the teamserver launches. Each listener type serves a specific purpose:
+
+### HTTP/HTTPS Listeners
+
+HTTP/HTTPS listeners bind to network interfaces and handle agent callbacks over HTTP or HTTPS protocols. They support:
+
+- Multiple callback hosts with rotation strategies
+- Custom headers and URIs for traffic shaping
+- TLS/SSL encryption for secure communications
+- Proxy support for agents behind corporate proxies
+- Customizable response headers for evasion
+
+### SMB Listeners
+
+SMB listeners enable peer-to-peer communication between agents using named pipes. They're primarily used for:
+
+- Lateral movement within networks
+- Communication with agents that cannot directly reach the teamserver
+- Establishing parent-child agent relationships
+- Operating in environments with strict egress filtering
+
+## Profile Configuration
+
+Listeners are defined in the `Listeners` block of your profile:
+
+```hcl
+Listeners {
+    Http {
+        Name = "Primary HTTP Listener"
+        Hosts = ["teamserver.example.com"]
+        PortBind = 443
+        PortConn = 443
+        Secure = true
+        // Additional options...
+    }
+
+    Smb {
+        Name = "Pivot Listener"
+        PipeName = "msagent_pipe"
+    }
+}
+```
+
+## Operational Considerations
+
+<Note>
+  Always use `Secure = true` for HTTP listeners in production environments to encrypt agent communications with TLS.
+</Note>
+
+### Kill Dates and Working Hours
+
+Both HTTP and SMB listeners support operational security features:
+
+- **KillDate**: Automatically terminate agent operations after a specified date/time
+- **WorkingHours**: Restrict agent callbacks to specific time windows (e.g., business hours)
+
+These features help agents blend in with normal network traffic and prevent discovery after operation completion.
+
+### Listener Management
+
+Listeners can be:
+
+- Started automatically from your profile at teamserver launch
+- Added dynamically through the Havoc client interface
+- Stopped and restarted without interrupting active agents
+- Edited to update headers, URIs, and other configuration options
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP/HTTPS Configuration" icon="gear" href="/listeners/http-https">
+    Learn about all HTTP/HTTPS listener options and configuration examples
+  </Card>
+  <Card title="SMB Configuration" icon="wrench" href="/listeners/smb">
+    Configure SMB listeners for lateral movement scenarios
+  </Card>
+</CardGroup>
