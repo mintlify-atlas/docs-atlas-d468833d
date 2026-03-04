@@ -1,0 +1,146 @@
+{
+  "projectType": "framework",
+  "projectName": "Havoc Framework",
+  "projectDescription": "Modern and malleable post-exploitation command and control framework",
+  "theme": "aspen",
+  "primaryColor": "#fcfcf4",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/teamserver",
+              "concepts/client",
+              "concepts/profiles"
+            ]
+          },
+          {
+            "group": "Demon Agent",
+            "pages": [
+              "demon/overview",
+              "demon/generation",
+              "demon/features",
+              "demon/commands",
+              "demon/sleep-obfuscation",
+              "demon/injection"
+            ]
+          },
+          {
+            "group": "Listeners",
+            "pages": [
+              "listeners/overview",
+              "listeners/http-https",
+              "listeners/smb"
+            ]
+          },
+          {
+            "group": "Extensibility",
+            "pages": [
+              "extensibility/overview",
+              "extensibility/external-c2",
+              "extensibility/custom-agents",
+              "extensibility/python-api",
+              "extensibility/modules"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/indirect-syscalls",
+              "advanced/token-management",
+              "advanced/dotnet-execution",
+              "advanced/coff-loader"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "api/commands/checkin",
+              "api/commands/sleep",
+              "api/commands/job",
+              "api/commands/proc",
+              "api/commands/token",
+              "api/commands/shellcode",
+              "api/commands/dotnet",
+              "api/commands/config"
+            ]
+          },
+          {
+            "group": "Python API",
+            "pages": [
+              "api/python/service",
+              "api/python/agent",
+              "api/python/commands"
+            ]
+          },
+          {
+            "group": "Profiles",
+            "pages": [
+              "api/profiles/teamserver",
+              "api/profiles/operators",
+              "api/profiles/demon",
+              "api/profiles/listeners"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Community",
+            "pages": [
+              "resources/faq",
+              "resources/troubleshooting",
+              "resources/contributing",
+              "resources/credits"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Modern post-exploitation C2 framework with multiplayer support",
+    "Demon agent with sleep obfuscation (Ekko, FOLIAGE) and indirect syscalls",
+    "Cross-platform Qt-based client with dark UI",
+    "Customizable C2 profiles using YAOTL format",
+    "HTTP/HTTPS and SMB listeners",
+    "Token vault for credential management",
+    "COFF loader and Beacon API compatibility",
+    "External C2 and custom agent support",
+    "Python API for extensibility",
+    "Module system for adding functionality"
+  ],
+  "publicApiSurface": [
+    "Teamserver API (Go)",
+    "Demon Agent Commands (checkin, sleep, job, proc, token, shellcode, dotnet, inject, pivot, etc.)",
+    "Python Service API (HavocService, AgentType, Command)",
+    "YAOTL Profile Configuration",
+    "HTTP/HTTPS Listener API",
+    "SMB Listener API",
+    "External C2 Service Endpoints",
+    "Module Loading Interface",
+    "COFF Loader API",
+    "Beacon Object Files Support"
+  ]
+}
